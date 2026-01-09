@@ -62,6 +62,7 @@ function App() {
   const [destConnectedServiceOrg, setDestConnectedServiceOrg] = useState<{ id: number, name: string } | null>(null);
   const [destFqdn, setDestFqdn] = useState('');
   const [destJwt, setDestJwt] = useState('');
+  const [destServiceOrgId, setDestServiceOrgId] = useState('');
 
   // App version
   const [appVersion, setAppVersion] = useState<string>('...');
@@ -679,6 +680,16 @@ function App() {
                       onChange={e => setJwt(e.target.value)}
                     />
                   </div>
+                  <div className="form-group">
+                    <label className="form-label">Target Service Org ID</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      placeholder="Service Org ID (optional)"
+                      value={serviceOrgId}
+                      onChange={e => setServiceOrgId(e.target.value)}
+                    />
+                  </div>
                   <button
                     className="btn btn-primary btn-lg"
                     style={{ width: '100%' }}
@@ -715,6 +726,16 @@ function App() {
                         onChange={e => setDestJwt(e.target.value)}
                       />
                     </div>
+                    <div className="form-group">
+                      <label className="form-label">Target Service Org ID</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        placeholder="Service Org ID (optional)"
+                        value={destServiceOrgId}
+                        onChange={e => setDestServiceOrgId(e.target.value)}
+                      />
+                    </div>
                     <button
                       className="btn btn-primary btn-lg"
                       style={{ width: '100%' }}
@@ -727,9 +748,35 @@ function App() {
                             setDestConnectionStatus('connected');
                             setDestServerUrl(result.serverUrl || destFqdn);
                             setDestServerVersion(result.serverVersion || '');
-                            if (result.serviceOrgId && result.serviceOrgName) {
-                              setDestConnectedServiceOrg({ id: result.serviceOrgId, name: result.serviceOrgName });
+
+                            // Resolve Destination Service Org
+                            let finalDestSoId = result.serviceOrgId;
+                            let finalDestSoName = result.serviceOrgName;
+
+                            if (destServiceOrgId) {
+                              // User specified a SO ID
+                              const id = parseInt(destServiceOrgId);
+                              if (!isNaN(id)) {
+                                finalDestSoId = id;
+                                if (finalDestSoId !== result.serviceOrgId) {
+                                  try {
+                                    const info = await api.getServiceOrgInfo(finalDestSoId);
+                                    finalDestSoName = info.name;
+                                  } catch (e) {
+                                    finalDestSoName = `Unknown (ID: ${finalDestSoId})`;
+                                  }
+                                }
+                              }
+                            } else if (result.serviceOrgId) {
+                              // Auto-fill if empty
+                              setDestServiceOrgId(result.serviceOrgId.toString());
                             }
+
+                            if (finalDestSoId && finalDestSoName) {
+                              setDestConnectedServiceOrg({ id: finalDestSoId, name: finalDestSoName });
+                              addLog('info', `Destination Service Org: ${finalDestSoName} (ID: ${finalDestSoId})`);
+                            }
+
                             addLog('success', `Connected to Destination: ${destFqdn}`);
                           } else {
                             setDestConnectionStatus('error');
