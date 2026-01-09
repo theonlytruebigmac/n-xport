@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { getVersion } from '@tauri-apps/api/app';
 import { open } from '@tauri-apps/plugin-dialog';
 import './index.css';
 import * as api from './api';
@@ -62,6 +63,9 @@ function App() {
   const [destFqdn, setDestFqdn] = useState('');
   const [destJwt, setDestJwt] = useState('');
 
+  // App version
+  const [appVersion, setAppVersion] = useState<string>('...');
+
   // Load initial data
   useEffect(() => {
     if (!isInitialLoad.current) {
@@ -69,6 +73,7 @@ function App() {
       loadProfiles();
       loadExportTypes();
       setupEventListeners();
+      getVersion().then(v => setAppVersion(v)).catch(() => setAppVersion('dev'));
     }
   }, []);
 
@@ -490,7 +495,8 @@ function App() {
       {/* Header */}
       <header className="header">
         <div className="header-title">
-          <h1>N-able <span className="header-accent">N-Central</span> Delta</h1>
+          <h1><span className="header-accent">N-xport</span> Data Tool</h1>
+          <span className="badge" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>v{appVersion}</span>
         </div>
         <div className="header-actions">
           <div className="header-status">
@@ -577,7 +583,7 @@ function App() {
           {currentStep === 'setup' && (
             <div className="centered-dashboard fade-in">
               {/* Mode Switcher */}
-              <div className="card" style={{ padding: 'var(--space-sm)' }}>
+              <div className="card" style={{ padding: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
                 <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
                   <button
                     className={`btn ${appMode === 'export' ? 'btn-primary' : 'btn-ghost'}`}
@@ -642,40 +648,6 @@ function App() {
                       <span>+ New Profile</span>
                     </button>
                   </div>
-
-                  {showNewProfile && (
-                    <div className="modal-overlay" onClick={() => setShowNewProfile(false)}>
-                      <div className="card modal-content" onClick={e => e.stopPropagation()}>
-                        <div className="card-header">
-                          <h2 className="card-title">Create New Profile</h2>
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Profile Name</label>
-                          <input
-                            type="text"
-                            className="form-input"
-                            placeholder="My Server"
-                            value={newProfileName}
-                            onChange={e => setNewProfileName(e.target.value)}
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label className="form-label">Server FQDN</label>
-                          <input
-                            type="text"
-                            className="form-input"
-                            placeholder="ncentral.example.com"
-                            value={fqdn}
-                            onChange={e => setFqdn(e.target.value)}
-                          />
-                        </div>
-                        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-                          <button className="btn btn-primary" onClick={handleSaveProfile}>Save Profile</button>
-                          <button className="btn btn-ghost" onClick={() => setShowNewProfile(false)}>Cancel</button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -911,6 +883,41 @@ function App() {
           </div>
         )
       }
+
+      {/* New Profile Modal - at root level for proper z-index */}
+      {showNewProfile && (
+        <div className="modal-overlay" onClick={() => setShowNewProfile(false)}>
+          <div className="card modal-content" onClick={e => e.stopPropagation()}>
+            <div className="card-header">
+              <h2 className="card-title">Create New Profile</h2>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Profile Name</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="My Server"
+                value={newProfileName}
+                onChange={e => setNewProfileName(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Server FQDN</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="ncentral.example.com"
+                value={fqdn}
+                onChange={e => setFqdn(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+              <button className="btn btn-primary" onClick={handleSaveProfile}>Save Profile</button>
+              <button className="btn btn-ghost" onClick={() => setShowNewProfile(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 }

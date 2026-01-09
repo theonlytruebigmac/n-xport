@@ -1,8 +1,8 @@
 //! Application settings and profiles
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 use crate::error::{AppError, Result};
 
@@ -24,9 +24,6 @@ pub struct Profile {
     pub encrypted_jwt: Option<String>,
 }
 
-// Simple encryption key - not secure against determined attackers but protects against casual snooping
-const SECRET_KEY: &[u8] = b"NcDataExportTool_SecretKey_Fallback";
-
 impl Profile {
     /// Create a new profile
     pub fn new(name: &str, fqdn: &str) -> Self {
@@ -39,26 +36,24 @@ impl Profile {
         }
     }
 
-    /// Encrypt a string (XOR + Base64)
-    pub fn encrypt(data: &str) -> String {
-        use base64::Engine;
-        let bytes: Vec<u8> = data.bytes()
-            .zip(SECRET_KEY.iter().cycle())
-            .map(|(b, k)| b ^ k)
-            .collect();
-        base64::engine::general_purpose::STANDARD.encode(bytes)
+    /// DEPRECATED: Encrypt function removed for security.
+    /// Credentials should only be stored in OS keyring.
+    #[deprecated(note = "Use OS keyring instead - fallback encryption removed for security")]
+    pub fn encrypt(_data: &str) -> String {
+        // Return empty string - this function is deprecated
+        // Credentials must be stored in OS keyring only
+        tracing::warn!(
+            "Profile::encrypt is deprecated - credentials should only be stored in OS keyring"
+        );
+        String::new()
     }
 
-    /// Decrypt a string
-    pub fn decrypt(data: &str) -> std::result::Result<String, String> {
-        use base64::Engine;
-        let bytes = base64::engine::general_purpose::STANDARD.decode(data)
-            .map_err(|e| e.to_string())?;
-        let decrypted: Vec<u8> = bytes.iter()
-            .zip(SECRET_KEY.iter().cycle())
-            .map(|(b, k)| b ^ k)
-            .collect();
-        String::from_utf8(decrypted).map_err(|e| e.to_string())
+    /// DEPRECATED: Decrypt function removed for security.
+    /// Credentials should only be stored in OS keyring.
+    #[deprecated(note = "Use OS keyring instead - fallback encryption removed for security")]
+    pub fn decrypt(_data: &str) -> std::result::Result<String, String> {
+        // Return error - this function is deprecated
+        Err("Fallback encryption removed for security. Please re-enter credentials.".to_string())
     }
 
     /// Get the base URL for API requests
@@ -114,14 +109,14 @@ impl Settings {
     pub fn config_path() -> Result<PathBuf> {
         let dirs = directories::ProjectDirs::from("com", "fraziersystems", "nc-data-export")
             .ok_or_else(|| AppError::Config("Could not determine config directory".into()))?;
-        
+
         Ok(dirs.config_dir().join("settings.json"))
     }
 
     /// Load settings from disk
     pub fn load() -> Result<Self> {
         let path = Self::config_path()?;
-        
+
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -134,7 +129,7 @@ impl Settings {
     /// Save settings to disk
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
-        
+
         // Ensure directory exists
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -147,9 +142,9 @@ impl Settings {
 
     /// Get the active profile
     pub fn get_active_profile(&self) -> Option<&Profile> {
-        self.active_profile.as_ref().and_then(|name| {
-            self.profiles.iter().find(|p| &p.name == name)
-        })
+        self.active_profile
+            .as_ref()
+            .and_then(|name| self.profiles.iter().find(|p| &p.name == name))
     }
 
     /// Get a mutable reference to the active profile
@@ -168,9 +163,14 @@ impl Settings {
     /// Delete a profile by name
     pub fn delete_profile(&mut self, name: &str) {
         self.profiles.retain(|p| p.name != name);
-        
+
         // Clear active profile if it was deleted
-        if self.active_profile.as_ref().map(|n| n == name).unwrap_or(false) {
+        if self
+            .active_profile
+            .as_ref()
+            .map(|n| n == name)
+            .unwrap_or(false)
+        {
             self.active_profile = self.profiles.first().map(|p| p.name.clone());
         }
     }

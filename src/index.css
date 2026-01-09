@@ -97,10 +97,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-sm) 48px;
+  padding: var(--space-xs) 32px;
   background: var(--color-bg-secondary);
   border-bottom: 1px solid var(--color-border);
-  gap: var(--space-lg);
+  gap: var(--space-md);
 }
 
 .header-title {
@@ -185,19 +185,18 @@ body {
   backdrop-filter: blur(20px);
   box-shadow: var(--shadow-lg);
   position: relative;
-  overflow: hidden;
 }
 
 .card-compact {
-  padding: var(--space-lg);
+  padding: var(--space-md);
 }
 
 .card-compact .card-header {
-  margin-bottom: var(--space-sm);
+  margin-bottom: var(--space-xs);
 }
 
 .card-compact .form-group {
-  margin-bottom: var(--space-sm);
+  margin-bottom: var(--space-xs);
 }
 
 .card::before {
@@ -215,12 +214,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
 }
 
 .card-title {
-  font-size: 1.125rem;
-  font-weight: 600;
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 /* Form Elements */
@@ -230,20 +229,20 @@ body {
 
 .form-label {
   display: block;
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: 0.8125rem;
+  font-weight: 600;
   color: var(--color-text-secondary);
-  margin-bottom: var(--space-xs);
+  margin-bottom: 6px;
 }
 
 .form-input {
   width: 100%;
-  padding: var(--space-sm) var(--space-md);
+  padding: 10px var(--space-md);
   background: var(--color-bg-input);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   font-family: inherit;
   transition: var(--transition-fast);
 }
@@ -319,9 +318,11 @@ body {
 }
 
 .btn-lg {
-  padding: var(--space-md) var(--space-lg);
-  font-size: 1rem;
+  padding: 12px var(--space-lg);
+  font-size: 0.9375rem;
+  font-weight: 600;
   border-radius: var(--radius-lg);
+  margin-top: var(--space-sm);
 }
 
 /* Checkbox */
@@ -572,7 +573,7 @@ body {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 24px 32px;
+  padding: 12px 24px;
   overflow-y: auto;
 }
 
@@ -581,7 +582,7 @@ body {
   max-width: 900px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 .dashboard-grid {
@@ -602,8 +603,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 24px;
-  gap: var(--space-md);
+  margin-bottom: 12px;
+  gap: var(--space-sm);
 }
 
 .step-item {

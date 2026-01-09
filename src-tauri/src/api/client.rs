@@ -3,16 +3,16 @@
 //! Provides async methods for all N-Central API endpoints with
 //! automatic rate limiting, pagination, and token refresh.
 
+use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use std::time::Duration;
-use serde::de::DeserializeOwned;
 use tokio::time::sleep;
 
+use super::auth::AuthManager;
+use super::endpoints::{self, paths, PaginationParams};
+use super::rate_limiter::RateLimiter;
 use crate::error::{ApiError, ApiResult};
 use crate::models::*;
-use super::auth::AuthManager;
-use super::rate_limiter::RateLimiter;
-use super::endpoints::{self, paths, PaginationParams};
 
 /// N-Central API client
 pub struct NcClient {
@@ -33,11 +33,12 @@ impl NcClient {
     pub fn new(base_url: &str) -> Self {
         let base_url = base_url.trim_end_matches('/').to_string();
         let auth = Arc::new(AuthManager::new(&base_url));
-        
+
         Self {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
                 .pool_max_idle_per_host(10)
+                .min_tls_version(reqwest::tls::Version::TLS_1_2)
                 .build()
                 .expect("Failed to create HTTP client"),
             base_url: base_url.clone(),
@@ -63,21 +64,23 @@ impl NcClient {
         T: DeserializeOwned,
         Q: serde::Serialize + ?Sized,
     {
-        self.request_full(reqwest::Method::GET, path, query, &()).await
+        self.request_full(reqwest::Method::GET, path, query, &())
+            .await
     }
 
     /// Make a GET request with rate limiting and auth
     async fn get<T: DeserializeOwned>(&self, path: &str) -> ApiResult<T> {
         self.request(reqwest::Method::GET, path, &()).await
     }
-    
+
     /// Make a POST request with rate limiting and auth
     async fn post<T, B>(&self, path: &str, body: &B) -> ApiResult<T>
     where
         T: DeserializeOwned,
         B: serde::Serialize + ?Sized,
     {
-        self.request_full(reqwest::Method::POST, path, &(), body).await
+        self.request_full(reqwest::Method::POST, path, &(), body)
+            .await
     }
 
     /// Make a PUT request with rate limiting and auth
@@ -86,7 +89,8 @@ impl NcClient {
         T: DeserializeOwned,
         B: serde::Serialize + ?Sized,
     {
-        self.request_full(reqwest::Method::PUT, path, &(), body).await
+        self.request_full(reqwest::Method::PUT, path, &(), body)
+            .await
     }
 
     /// Make a PATCH request with rate limiting and auth
@@ -95,7 +99,8 @@ impl NcClient {
         T: DeserializeOwned,
         B: serde::Serialize + ?Sized,
     {
-        self.request_full(reqwest::Method::PATCH, path, &(), body).await
+        self.request_full(reqwest::Method::PATCH, path, &(), body)
+            .await
     }
 
     /// Generic request handler
@@ -108,7 +113,13 @@ impl NcClient {
     }
 
     /// Full request handler with query and body
-    async fn request_full<T, Q, B>(&self, method: reqwest::Method, path: &str, query: &Q, body: &B) -> ApiResult<T>
+    async fn request_full<T, Q, B>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        query: &Q,
+        body: &B,
+    ) -> ApiResult<T>
     where
         T: DeserializeOwned,
         Q: serde::Serialize + ?Sized,
@@ -120,11 +131,12 @@ impl NcClient {
         loop {
             // Acquire rate limit permit
             let _permit = self.rate_limiter.acquire(path).await;
-            
+
             // Get auth token
             let token = self.auth.get_token().await?;
 
-            let response = self.http
+            let response = self
+                .http
                 .request(method.clone(), &url)
                 .query(query)
                 .json(body)
@@ -137,16 +149,18 @@ impl NcClient {
             // Handle rate limiting
             if status.as_u16() == 429 {
                 if retries >= self.max_retries {
-                    return Err(ApiError::RateLimited { retry_after_secs: 60 });
+                    return Err(ApiError::RateLimited {
+                        retry_after_secs: 60,
+                    });
                 }
-                
+
                 let retry_after = response
                     .headers()
                     .get("Retry-After")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(5);
-                
+
                 tracing::warn!("Rate limited, retrying after {} seconds", retry_after);
                 sleep(Duration::from_secs(retry_after)).await;
                 retries += 1;
@@ -172,7 +186,13 @@ impl NcClient {
 
             // Parse JSON, logging body on error
             return serde_json::from_str(&body_text).map_err(|e| {
-                tracing::error!("JSON parse error for {} {}: {}. Body: {}", method, path, e, &body_text[..body_text.len().min(1000)]);
+                tracing::error!(
+                    "JSON parse error for {} {}: {}. Body: {}",
+                    method,
+                    path,
+                    e,
+                    &body_text[..body_text.len().min(1000)]
+                );
                 ApiError::InvalidResponse(format!("Failed to parse response: {}", e))
             });
         }
@@ -193,25 +213,29 @@ impl NcClient {
         let mut page = 1;
 
         loop {
-            let params = PaginationParams::new()
-                .page(page)
-                .page_size(page_size);
+            let params = PaginationParams::new().page(page).page_size(page_size);
 
             let response: PaginatedResponse<T> = self.get_with_query(path, &params).await?;
-            
+
             let count = response.data.len();
-            tracing::info!("Fetching {}: Page {} got {} items. Page info: {:?}", path, page, count, response.page_info);
+            tracing::info!(
+                "Fetching {}: Page {} got {} items. Page info: {:?}",
+                path,
+                page,
+                count,
+                response.page_info
+            );
             all_items.extend(response.data);
 
             // Report progress
             if let Some(ref page_info) = response.page_info {
                 on_progress(page, page_info.total_pages);
-                
+
                 if page >= page_info.total_pages {
                     break;
                 }
             }
-            
+
             // Safety: always break if no items returned
             if count == 0 {
                 break;
@@ -219,7 +243,11 @@ impl NcClient {
 
             // Safety: if we got fewer items than requested page size, this matches the last page
             if (count as u32) < page_size {
-                tracing::info!("Received partial page ({} < {}), assuming end of data", count, page_size);
+                tracing::info!(
+                    "Received partial page ({} < {}), assuming end of data",
+                    count,
+                    page_size
+                );
                 break;
             }
 
@@ -329,30 +357,48 @@ impl NcClient {
     // ==================== Creation Methods ====================
 
     /// Create a customer
-    pub async fn create_customer(&self, customer: &serde_json::Value) -> ApiResult<serde_json::Value> {
+    pub async fn create_customer(
+        &self,
+        customer: &serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
         self.post(paths::CUSTOMERS, customer).await
     }
 
     /// Create a user role
-    pub async fn create_user_role(&self, org_unit_id: i64, role: &serde_json::Value) -> ApiResult<serde_json::Value> {
+    pub async fn create_user_role(
+        &self,
+        org_unit_id: i64,
+        role: &serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
         let path = endpoints::org_unit_user_roles(org_unit_id);
         self.post(&path, role).await
     }
 
     /// Create an access group
-    pub async fn create_access_group(&self, org_unit_id: i64, group: &serde_json::Value) -> ApiResult<serde_json::Value> {
+    pub async fn create_access_group(
+        &self,
+        org_unit_id: i64,
+        group: &serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
         let path = endpoints::org_unit_access_groups(org_unit_id);
         self.post(&path, group).await
     }
 
     /// Create a user
-    pub async fn create_user(&self, org_unit_id: i64, user: &serde_json::Value) -> ApiResult<serde_json::Value> {
+    pub async fn create_user(
+        &self,
+        org_unit_id: i64,
+        user: &serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
         let path = endpoints::org_unit_users(org_unit_id);
         self.post(&path, user).await
     }
 
     /// Set a custom property value
-    pub async fn set_custom_property_value(&self, value_data: &serde_json::Value) -> ApiResult<serde_json::Value> {
+    pub async fn set_custom_property_value(
+        &self,
+        value_data: &serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
         self.post(paths::CUSTOM_PROPERTIES_VALUES, value_data).await
     }
 }

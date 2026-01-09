@@ -1,13 +1,13 @@
 //! Connection-related Tauri commands
 
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tauri::State;
 use serde::Serialize;
+use std::sync::Arc;
+use tauri::State;
+use tokio::sync::Mutex;
 
 use crate::api::NcClient;
+use crate::config::Settings;
 use crate::credentials::CredentialStore;
-use crate::config::{Settings, Profile};
 
 /// Shared client state
 pub struct AppState {
@@ -44,10 +44,14 @@ pub async fn test_connection(
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
     let jwt = jwt.trim().to_string();
-    let base_url = format!("https://{}", fqdn.trim_start_matches("https://").trim_start_matches("http://"));
-    
+    let base_url = format!(
+        "https://{}",
+        fqdn.trim_start_matches("https://")
+            .trim_start_matches("http://")
+    );
+
     let client = NcClient::new(&base_url);
-    
+
     // Authenticate
     if let Err(e) = client.authenticate(&jwt).await {
         return Ok(ConnectionResult {
@@ -80,10 +84,8 @@ pub async fn test_connection(
 
     // Get first service org info
     let (so_id, so_name) = match client.get_service_orgs().await {
-        Ok(orgs) if !orgs.is_empty() => {
-            (Some(orgs[0].so_id), Some(orgs[0].so_name.clone()))
-        }
-        _ => (None, None)
+        Ok(orgs) if !orgs.is_empty() => (Some(orgs[0].so_id), Some(orgs[0].so_name.clone())),
+        _ => (None, None),
     };
 
     // Store client for later use
@@ -142,10 +144,14 @@ pub async fn connect_destination(
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
     let jwt = jwt.trim().to_string();
-    let base_url = format!("https://{}", fqdn.trim_start_matches("https://").trim_start_matches("http://"));
-    
+    let base_url = format!(
+        "https://{}",
+        fqdn.trim_start_matches("https://")
+            .trim_start_matches("http://")
+    );
+
     let client = NcClient::new(&base_url);
-    
+
     // Authenticate
     if let Err(e) = client.authenticate(&jwt).await {
         return Ok(ConnectionResult {
@@ -160,23 +166,20 @@ pub async fn connect_destination(
 
     // Get server info
     let version = match client.get_server_info().await {
-        Ok(info) => {
-            info.ncentral
-                .or(info.product_version)
-                .or(info.ncentral_version)
-                .or(info.version)
-                .or(info.build)
-                .or(info.api_version)
-        }
-        Err(_) => None
+        Ok(info) => info
+            .ncentral
+            .or(info.product_version)
+            .or(info.ncentral_version)
+            .or(info.version)
+            .or(info.build)
+            .or(info.api_version),
+        Err(_) => None,
     };
 
     // Get first service org info
     let (so_id, so_name) = match client.get_service_orgs().await {
-        Ok(orgs) if !orgs.is_empty() => {
-            (Some(orgs[0].so_id), Some(orgs[0].so_name.clone()))
-        }
-        _ => (None, None)
+        Ok(orgs) if !orgs.is_empty() => (Some(orgs[0].so_id), Some(orgs[0].so_name.clone())),
+        _ => (None, None),
     };
 
     // Store destination client
@@ -199,39 +202,33 @@ pub async fn save_credentials(
     jwt: String,
 ) -> std::result::Result<(), String> {
     let jwt = jwt.trim().to_string();
-    
-    // Always try to save to keyring
-    let keyring_result = match CredentialStore::store_jwt(&profile_name, &jwt) {
+
+    // Store credentials in OS keyring only (no fallback for security)
+    match CredentialStore::store_jwt(&profile_name, &jwt) {
         Ok(_) => {
-            tracing::info!("Successfully saved credentials to keyring for '{}'", profile_name);
+            tracing::info!(
+                "Successfully saved credentials to keyring for '{}'",
+                profile_name
+            );
             Ok(())
         }
         Err(e) => {
-            tracing::error!("Failed to save credentials to keyring for '{}': {}", profile_name, e);
-            Err(e.to_string())
-        }
-    };
-
-    // Also update profile with encrypted fallback
-    if let Ok(mut settings) = Settings::load() {
-        if let Some(profile) = settings.profiles.iter_mut().find(|p| p.name == profile_name) {
-            profile.encrypted_jwt = Some(Profile::encrypt(&jwt));
-            if let Err(e) = settings.save() {
-                tracing::error!("Failed to save profile fallback: {}", e);
-            } else {
-                tracing::info!("Saved credentials fallback to profile for '{}'", profile_name);
-            }
+            tracing::error!(
+                "Failed to save credentials to keyring for '{}': {}",
+                profile_name,
+                e
+            );
+            Err(format!(
+                "Failed to save credentials: {}. Please ensure your system keyring is available.",
+                e
+            ))
         }
     }
-
-    keyring_result
 }
 
 /// Check if credentials exist for a profile
 #[tauri::command]
-pub async fn has_credentials(
-    profile_name: String,
-) -> bool {
+pub async fn has_credentials(profile_name: String) -> bool {
     // Check keyring first
     match CredentialStore::get_jwt(&profile_name) {
         Ok(Some(_)) => return true,
@@ -246,62 +243,47 @@ pub async fn has_credentials(
             }
         }
     }
-    
+
     false
 }
 
 /// Get credentials for a profile
 #[tauri::command]
-pub async fn get_credentials(
-    profile_name: String,
-) -> std::result::Result<Option<String>, String> {
+pub async fn get_credentials(profile_name: String) -> std::result::Result<Option<String>, String> {
     tracing::info!("Getting credentials for '{}'", profile_name);
-    
-    // Try keyring first
+
+    // Get credentials from OS keyring only (no fallback for security)
     match CredentialStore::get_jwt(&profile_name) {
         Ok(Some(jwt)) => {
             tracing::info!("Found credentials in keyring for '{}'", profile_name);
-            return Ok(Some(jwt));
+            Ok(Some(jwt))
         }
         Ok(None) => {
-            tracing::warn!("No credentials in keyring for '{}', checking fallback...", profile_name);
+            tracing::warn!("No credentials in keyring for '{}'", profile_name);
+            Ok(None)
         }
         Err(e) => {
-            tracing::error!("Keyring error for '{}': {}, checking fallback...", profile_name, e);
+            tracing::error!("Keyring error for '{}': {}", profile_name, e);
+            Ok(None)
         }
     }
-
-    // Try fallback
-    if let Ok(settings) = Settings::load() {
-        if let Some(profile) = settings.profiles.iter().find(|p| p.name == profile_name) {
-            if let Some(encrypted) = &profile.encrypted_jwt {
-                match Profile::decrypt(encrypted) {
-                    Ok(jwt) => {
-                        tracing::info!("Found credentials in profile fallback for '{}'", profile_name);
-                        return Ok(Some(jwt));
-                    }
-                    Err(e) => tracing::error!("Failed to decrypt fallback: {}", e),
-                }
-            }
-        }
-    }
-
-    Ok(None)
 }
 
 /// Delete credentials for a profile
 #[tauri::command]
-pub async fn delete_credentials(
-    profile_name: String,
-) -> std::result::Result<(), String> {
+pub async fn delete_credentials(profile_name: String) -> std::result::Result<(), String> {
     tracing::info!("Deleting credentials for '{}'", profile_name);
-    
+
     // Delete from keyring
     let _ = CredentialStore::delete_jwt(&profile_name);
 
     // Delete fallback
     if let Ok(mut settings) = Settings::load() {
-        if let Some(profile) = settings.profiles.iter_mut().find(|p| p.name == profile_name) {
+        if let Some(profile) = settings
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == profile_name)
+        {
             profile.encrypted_jwt = None;
             let _ = settings.save();
         }
@@ -312,9 +294,7 @@ pub async fn delete_credentials(
 
 /// Disconnect (clear client)
 #[tauri::command]
-pub async fn disconnect(
-    state: State<'_, AppState>,
-) -> std::result::Result<(), String> {
+pub async fn disconnect(state: State<'_, AppState>) -> std::result::Result<(), String> {
     *state.client.lock().await = None;
     *state.dest_client.lock().await = None;
     Ok(())
@@ -327,7 +307,7 @@ pub async fn get_service_org_info(
     state: State<'_, AppState>,
 ) -> std::result::Result<serde_json::Value, String> {
     let client = state.client.lock().await;
-    
+
     let client = match &*client {
         Some(c) => c,
         None => return Err("Not connected".to_string()),
@@ -338,6 +318,6 @@ pub async fn get_service_org_info(
             "id": so.so_id,
             "name": so.so_name
         })),
-        Err(e) => Err(format!("Failed to get service org: {}", e))
+        Err(e) => Err(format!("Failed to get service org: {}", e)),
     }
 }

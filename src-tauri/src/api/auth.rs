@@ -2,10 +2,10 @@
 //!
 //! Handles JWT exchange, token refresh, and credential storage.
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use crate::error::{ApiError, ApiResult};
 use crate::models::{AuthResponse, AuthState, RefreshResponse};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Manages authentication state and token refresh
 pub struct AuthManager {
@@ -33,8 +33,9 @@ impl AuthManager {
     /// Authenticate using a JWT token
     pub async fn authenticate(&self, jwt: &str) -> ApiResult<()> {
         let url = format!("{}/api/auth/authenticate", self.base_url);
-        
-        let response = self.http
+
+        let response = self
+            .http
             .post(&url)
             .header("Authorization", format!("Bearer {}", jwt))
             .send()
@@ -43,23 +44,33 @@ impl AuthManager {
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let message = response.text().await.unwrap_or_default();
-            
+
             return Err(match status {
                 401 | 403 => ApiError::Authentication(message),
-                429 => ApiError::RateLimited { retry_after_secs: 60 },
+                429 => ApiError::RateLimited {
+                    retry_after_secs: 60,
+                },
                 _ => ApiError::Server { status, message },
             });
         }
 
-        // Get response body as text first for debugging
-        let body = response.text().await
+        // Get response body as text
+        let body = response
+            .text()
+            .await
             .map_err(|e| ApiError::InvalidResponse(e.to_string()))?;
-        
-        tracing::debug!("Auth response body: {}", body);
-        
+
+        // Sanitize body for logging
+        tracing::debug!("Auth response received, length: {}", body.len());
+
         // Parse the JSON
-        let auth_response: AuthResponse = serde_json::from_str(&body)
-            .map_err(|e| ApiError::InvalidResponse(format!("JSON parse error: {}. Body: {}", e, &body[..body.len().min(500)])))?;
+        let auth_response: AuthResponse = serde_json::from_str(&body).map_err(|e| {
+            ApiError::InvalidResponse(format!(
+                "JSON parse error: {}. Body length: {}",
+                e,
+                body.len()
+            ))
+        })?;
 
         let state = AuthState::from_response(auth_response);
         *self.state.write().await = Some(state);
@@ -70,12 +81,10 @@ impl AuthManager {
     /// Get a valid access token, refreshing if needed
     pub async fn get_token(&self) -> ApiResult<String> {
         let state = self.state.read().await;
-        
+
         match &*state {
             None => Err(ApiError::Authentication("Not authenticated".into())),
-            Some(state) if state.is_refresh_expired() => {
-                Err(ApiError::TokenExpired)
-            }
+            Some(state) if state.is_refresh_expired() => Err(ApiError::TokenExpired),
             Some(state) if state.is_access_expired() => {
                 let refresh_token = state.refresh_token.clone();
                 // Lock is released when state goes out of scope
@@ -102,8 +111,9 @@ impl AuthManager {
     /// Internal refresh implementation with token passed in
     async fn refresh_token_internal(&self, refresh_token: &str) -> ApiResult<String> {
         let url = format!("{}/api/auth/refresh", self.base_url);
-        
-        let response = self.http
+
+        let response = self
+            .http
             .post(&url)
             .header("Authorization", format!("Bearer {}", refresh_token))
             .send()
@@ -118,7 +128,9 @@ impl AuthManager {
             return Err(ApiError::Server { status, message });
         }
 
-        let refresh_response: RefreshResponse = response.json().await
+        let refresh_response: RefreshResponse = response
+            .json()
+            .await
             .map_err(|e| ApiError::InvalidResponse(e.to_string()))?;
 
         // Update the access token
@@ -126,9 +138,8 @@ impl AuthManager {
         if let Some(ref mut s) = *state {
             let now = chrono::Utc::now();
             s.access_token = refresh_response.tokens.access.token.clone();
-            s.access_expires_at = now + chrono::Duration::seconds(
-                refresh_response.tokens.access.expires_in_seconds
-            );
+            s.access_expires_at =
+                now + chrono::Duration::seconds(refresh_response.tokens.access.expires_in_seconds);
         }
 
         Ok(refresh_response.tokens.access.token)
