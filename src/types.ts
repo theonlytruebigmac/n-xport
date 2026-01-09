@@ -1,0 +1,82 @@
+// TypeScript types for N-Central Data Export Tool
+
+export interface Profile {
+  name: string;
+  fqdn: string;
+  serviceOrgId?: number;
+  lastUsed?: string;
+}
+
+export interface Settings {
+  profiles: Profile[];
+  activeProfile?: string;
+  exportDirectory?: string;
+  exportFormats: string[];
+  window: WindowState;
+}
+
+export interface WindowState {
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+  maximized: boolean;
+}
+
+export interface ConnectionResult {
+  success: boolean;
+  message: string;
+  serverUrl?: string;
+  serverVersion?: string;
+  serviceOrgId?: number;
+  serviceOrgName?: string;
+}
+
+export interface ExportOptions {
+  serviceOrgs: boolean;
+  customers: boolean;
+  sites: boolean;
+  devices: boolean;
+  accessGroups: boolean;
+  userRoles: boolean;
+  orgProperties: boolean;
+  deviceProperties: boolean;
+  users: boolean;
+}
+
+export interface ExportResult {
+  success: boolean;
+  message: string;
+  filesCreated: string[];
+  totalRecords: number;
+}
+
+export interface ProgressUpdate {
+  phase: string;
+  message: string;
+  percent: number;
+  current: number;
+  total: number;
+}
+
+export interface ExportType {
+  id: string;
+  name: string;
+  default: boolean;
+}
+
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface AppState {
+  connectionStatus: ConnectionStatus;
+  serverVersion?: string;
+  activeProfile?: Profile;
+  exportProgress?: ProgressUpdate;
+  logs: LogEntry[];
+}
+
+export interface LogEntry {
+  timestamp: Date;
+  level: 'info' | 'success' | 'warning' | 'error';
+  message: string;
+}

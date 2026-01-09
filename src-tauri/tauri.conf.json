@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "N-Central Data Export",
+  "version": "0.1.0",
+  "identifier": "com.fraziersystems.nc-data-export",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "N-Central Data Export Tool",
+        "width": 950,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Utility",
+    "shortDescription": "Export data from N-Central via REST API",
+    "longDescription": "Cross-platform tool to export customer data from N-Central RMM using the REST API with rate limiting and async support.",
+    "publisher": "FrazierSystems",
+    "copyright": "© 2026 FrazierSystems",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBEMjVBNUMwRjlERjI1NjEKUldSaEpkLzV3S1VsRFhiR3lobkl4L1JVZDFuQVBIYS9qYW96MytodFo4VnkxVkR6Vkh4WEtNNnIK",
+      "endpoints": [
+        "https://github.com/theonlytruebigmac/nc-data-export-tool/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
