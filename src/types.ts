@@ -1,9 +1,18 @@
 // TypeScript types for N-Central Data Export Tool
 
+export type ProfileType = 'export' | 'migration';
+
+export interface ConnectionConfig {
+  fqdn: string;
+  username?: string;
+  serviceOrgId?: number;
+}
+
 export interface Profile {
   name: string;
-  fqdn: string;
-  serviceOrgId?: number;
+  type: ProfileType;
+  source: ConnectionConfig;
+  destination?: ConnectionConfig;
   lastUsed?: string;
 }
 
@@ -77,6 +86,6 @@ export interface AppState {
 
 export interface LogEntry {
   timestamp: Date;
-  level: 'info' | 'success' | 'warning' | 'error';
+  level: 'info' | 'success' | 'warning' | 'error' | 'debug';
   message: string;
 }

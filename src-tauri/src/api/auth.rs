@@ -19,11 +19,12 @@ pub struct AuthManager {
 
 impl AuthManager {
     /// Create a new auth manager
-    pub fn new(base_url: &str) -> Self {
+    pub fn new(base_url: &str, cookie_store: Arc<reqwest::cookie::Jar>) -> Self {
         Self {
             state: Arc::new(RwLock::new(None)),
             base_url: base_url.trim_end_matches('/').to_string(),
             http: reqwest::Client::builder()
+                .cookie_provider(cookie_store)
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("Failed to create HTTP client"),

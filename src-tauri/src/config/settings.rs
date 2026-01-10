@@ -6,59 +6,91 @@ use std::path::PathBuf;
 
 use crate::error::{AppError, Result};
 
+/// Profile type: export (single connection) or migration (dual connection)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProfileType {
+    Export,
+    Migration,
+}
+
+impl Default for ProfileType {
+    fn default() -> Self {
+        ProfileType::Export
+    }
+}
+
+/// A single connection configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionConfig {
+    /// N-Central server FQDN
+    pub fqdn: String,
+    /// API Username (Required for SOAP)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Target Service Organization ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_org_id: Option<i64>,
+}
+
 /// A server profile configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
     /// Profile name (e.g., "Production", "Staging")
     pub name: String,
-    /// N-Central server FQDN
-    pub fqdn: String,
-    /// Target Service Organization ID
-    pub service_org_id: Option<i64>,
-    /// Last used timestamp
-    #[serde(default)]
-    pub last_used: Option<String>,
-    /// Encrypted JWT fallback (for when system keyring fails)
+    /// Profile type (export or migration)
+    #[serde(default, rename = "type")]
+    pub profile_type: ProfileType,
+    /// Source connection config
+    pub source: ConnectionConfig,
+    /// Destination connection config (only for migration type)
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub encrypted_jwt: Option<String>,
+    pub destination: Option<ConnectionConfig>,
+    /// Last used timestamp
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<String>,
 }
 
 impl Profile {
-    /// Create a new profile
-    pub fn new(name: &str, fqdn: &str) -> Self {
+    /// Create a new export profile
+    pub fn new_export(name: &str, fqdn: &str) -> Self {
         Self {
             name: name.to_string(),
-            fqdn: fqdn.to_string(),
-            service_org_id: None,
+            profile_type: ProfileType::Export,
+            source: ConnectionConfig {
+                fqdn: fqdn.to_string(),
+                username: None,
+                service_org_id: None,
+            },
+            destination: None,
             last_used: None,
-            encrypted_jwt: None,
         }
     }
 
-    /// DEPRECATED: Encrypt function removed for security.
-    /// Credentials should only be stored in OS keyring.
-    #[deprecated(note = "Use OS keyring instead - fallback encryption removed for security")]
-    pub fn encrypt(_data: &str) -> String {
-        // Return empty string - this function is deprecated
-        // Credentials must be stored in OS keyring only
-        tracing::warn!(
-            "Profile::encrypt is deprecated - credentials should only be stored in OS keyring"
-        );
-        String::new()
+    /// Create a new migration profile
+    pub fn new_migration(name: &str, source_fqdn: &str, dest_fqdn: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            profile_type: ProfileType::Migration,
+            source: ConnectionConfig {
+                fqdn: source_fqdn.to_string(),
+                username: None,
+                service_org_id: None,
+            },
+            destination: Some(ConnectionConfig {
+                fqdn: dest_fqdn.to_string(),
+                username: None,
+                service_org_id: None,
+            }),
+            last_used: None,
+        }
     }
 
-    /// DEPRECATED: Decrypt function removed for security.
-    /// Credentials should only be stored in OS keyring.
-    #[deprecated(note = "Use OS keyring instead - fallback encryption removed for security")]
-    pub fn decrypt(_data: &str) -> std::result::Result<String, String> {
-        // Return error - this function is deprecated
-        Err("Fallback encryption removed for security. Please re-enter credentials.".to_string())
-    }
-
-    /// Get the base URL for API requests
+    /// Get the base URL for API requests (source)
     pub fn base_url(&self) -> String {
-        format!("https://{}", self.fqdn)
+        format!("https://{}", self.source.fqdn)
     }
 }
 

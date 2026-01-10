@@ -15,6 +15,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::models::*;
 
 /// N-Central API client
+#[derive(Clone)]
 pub struct NcClient {
     /// HTTP client
     http: reqwest::Client,
@@ -32,10 +33,12 @@ impl NcClient {
     /// Create a new client
     pub fn new(base_url: &str) -> Self {
         let base_url = base_url.trim_end_matches('/').to_string();
-        let auth = Arc::new(AuthManager::new(&base_url));
+        let cookie_store = Arc::new(reqwest::cookie::Jar::default());
+        let auth = Arc::new(AuthManager::new(&base_url, cookie_store.clone()));
 
         Self {
             http: reqwest::Client::builder()
+                .cookie_provider(cookie_store)
                 .timeout(Duration::from_secs(60))
                 .pool_max_idle_per_host(10)
                 .min_tls_version(reqwest::tls::Version::TLS_1_2)
@@ -84,6 +87,7 @@ impl NcClient {
     }
 
     /// Make a PUT request with rate limiting and auth
+    #[allow(dead_code)]
     async fn put<T, B>(&self, path: &str, body: &B) -> ApiResult<T>
     where
         T: DeserializeOwned,
@@ -94,6 +98,7 @@ impl NcClient {
     }
 
     /// Make a PATCH request with rate limiting and auth
+    #[allow(dead_code)]
     async fn patch<T, B>(&self, path: &str, body: &B) -> ApiResult<T>
     where
         T: DeserializeOwned,
@@ -302,6 +307,11 @@ impl NcClient {
         self.get_all_pages(paths::DEVICES, 100, |_, _| {}).await
     }
 
+    /// Get all users system-wide
+    pub async fn get_users(&self) -> ApiResult<Vec<User>> {
+        self.get_all_pages(paths::USERS, 100, |_, _| {}).await
+    }
+
     /// Get users for an org unit
     pub async fn get_users_by_org_unit(&self, org_unit_id: i64) -> ApiResult<Vec<User>> {
         let path = endpoints::org_unit_users(org_unit_id);
@@ -359,9 +369,11 @@ impl NcClient {
     /// Create a customer
     pub async fn create_customer(
         &self,
+        parent_id: i64,
         customer: &serde_json::Value,
     ) -> ApiResult<serde_json::Value> {
-        self.post(paths::CUSTOMERS, customer).await
+        let path = endpoints::service_org_customers(parent_id);
+        self.post(&path, customer).await
     }
 
     /// Create a user role
@@ -374,13 +386,24 @@ impl NcClient {
         self.post(&path, role).await
     }
 
-    /// Create an access group
-    pub async fn create_access_group(
+    /// Create an org unit type access group
+    /// POST to /api/org-units/{id}/access-groups (same path as GET)
+    pub async fn create_org_unit_access_group(
         &self,
         org_unit_id: i64,
         group: &serde_json::Value,
     ) -> ApiResult<serde_json::Value> {
         let path = endpoints::org_unit_access_groups(org_unit_id);
+        self.post(&path, group).await
+    }
+
+    /// Create a device type access group
+    pub async fn create_device_access_group(
+        &self,
+        org_unit_id: i64,
+        group: &serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
+        let path = endpoints::device_access_groups_create(org_unit_id);
         self.post(&path, group).await
     }
 

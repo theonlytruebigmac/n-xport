@@ -8,12 +8,16 @@ import type {
 } from './types';
 
 // Connection commands
-export async function testConnection(fqdn: string, jwt: string): Promise<ConnectionResult> {
-    return invoke('test_connection', { fqdn, jwt });
+export async function testConnection(fqdn: string, jwt: string, username?: string): Promise<ConnectionResult> {
+    return invoke('test_connection', { fqdn, jwt, username });
 }
 
-export async function connectWithProfile(profileName: string, fqdn: string): Promise<ConnectionResult> {
-    return invoke('connect_with_profile', { profileName, fqdn });
+export async function connectDestination(fqdn: string, jwt: string, username?: string): Promise<ConnectionResult> {
+    return invoke('connect_destination', { fqdn, jwt, username });
+}
+
+export async function connectWithProfile(profileName: string, fqdn: string, username?: string): Promise<ConnectionResult> {
+    return invoke('connect_with_profile', { profileName, fqdn, username });
 }
 
 export async function saveCredentials(profileName: string, jwt: string): Promise<void> {
@@ -30,6 +34,10 @@ export async function getCredentials(profileName: string): Promise<string | null
 
 export async function deleteCredentials(profileName: string): Promise<void> {
     return invoke('delete_credentials', { profileName });
+}
+
+export async function getPassword(profileName: string): Promise<string | null> {
+    return invoke('get_password', { profileName });
 }
 
 export async function disconnect(): Promise<void> {

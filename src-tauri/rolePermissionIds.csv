@@ -1,0 +1,173 @@
+"groupid","permissionid","permissionname","description","viewonly","parentpermissionid","systemlevelonly","organizationlevelonly","permissionsetid"
+11,1104,RSS_VIEW,Allowed to view RSS,true,,false,false,1028
+24,310,AUDIT_TRAIL_VIEW,Permission to view audit trails,true,,false,false,1009
+3,401,DASHBOARDS_VIEW,Allowed to view existing Dashboards,true,402,false,false,1010
+3,402,DASHBOARDS_ALL,Allowed full control over Dashboards,false,,false,true,1010
+5,501,PATCH_APPROVAL_ALL,Allowed to configure Patch Approvals,false,,false,true,1011
+5,503,PATCH_CONFIGURATION_ALL,Allowed to configure Patch,false,,false,true,1012
+6,601,SCHEDULED_TASKS_ALL,Full control over Scheduled Tasks,false,,false,true,1013
+6,602,AUTOMATION_MANAGER_ALL,Allowed to run/configure AutomationManager,false,,false,true,1014
+6,605,SCHEDULED_TASKS_FILE_REPOSITORY_ALL,Full control over Task Repository,false,,false,true,1015
+6,606,SCHEDULED_TASKS_FILE_REPOSITORY_VIEW,Allowed to view Task Repository,true,605,false,true,1015
+7,701,SECURITY_MANAGER_PROFILES_VIEW,Allowed to view SM Profiless,true,702,false,true,1016
+7,702,SECURITY_MANAGER_PROFILES_ALL,Full control over SM Profiless,false,,false,true,1016
+7,703,SECURITY_MANAGER_QUARANTINE_VIEW,Allowed to manage SM Quarantine,true,704,false,true,1017
+7,704,SECURITY_MANAGER_QUARANTINE_ALL,Full control over SM Quarantine,false,,false,true,1017
+7,705,SECURITY_MANAGER_EVENTS_VIEW,Allowed to manage SM Events,true,706,false,true,1018
+7,706,SECURITY_MANAGER_EVENTS_ALL,Full control over SM Events,false,,false,true,1018
+7,707,SECURITY_MANAGER_EXCLUSIONS_VIEW,Allowed to manage SM Exclusions,true,708,false,true,1019
+7,708,SECURITY_MANAGER_EXCLUSIONS_ALL,Full control over Exclusions,false,,false,true,1019
+7,709,SECURITY_MANAGER_UPDATE_SERVERS_VIEW,Allowed to view AV Update Servers,true,710,false,true,1020
+7,710,SECURITY_MANAGER_UPDATE_SERVERS_ALL,Full control over SM Update Servers,false,,false,true,1020
+8,801,REPORT_MANAGER_ADMINISTRATION_ALL,Access to Report Manager Administration Console,false,,false,true,1021
+9,901,NCENTRAL_REPORTS_ALL,Run reports in the N-able N-central UI in the web browser,false,,false,false,1023
+9,902,NCENTRAL_REPORTS_CONTROL_ALL,Allow enabling and disabling reports.,false,,false,true,1024
+10,1001,DISCOVERY_JOBS_VIEW,Allowed to view discovery jobs,true,1002,false,true,1025
+10,1002,DISCOVERY_JOBS_ALL,Allowed full control over discovery jobs,false,,false,true,1025
+11,1101,MY_LINKS_VIEW,Allowed to view My Links,true,1102,false,false,1026
+11,1102,MY_LINKS_ALL,Allowed to manage My Links,false,,false,false,1026
+11,1103,HELP_RESOURCES_VIEW,Allowed to view Help Resources,true,,false,false,1027
+12,2401,LIVECHAT_ALL,Allow access to LiveChat,false,,false,false,2113
+28,3571,DMA_FILE_VAULT_ALL,Allow usage of DMA FileVault,false,,false,false,3570
+28,3572,DMA_FILE_VAULT_VIEW,Allow access to DMA FileVault,true,3571,false,false,3570
+28,3581,DMA_LOCK_AND_LOCATE_ALL,Allow usage of DMA Lock & Locate,false,,false,false,3580
+28,3582,DMA_LOCK_AND_LOCATE_VIEW,Allow access to DMA Lock & Locate,true,3581,false,false,3580
+14,1105,THIRD_PARTY_SOFTWARE_DOWNLOAD_ALL,Allowed to download Third-party Software,false,,false,true,1029
+11,1106,NCENTRAL_UPGRADE_FAIL_MESSAGE,Allowed to see upgrade failed message when logging-in after a faied upgrade attempt of N-able N-central,false,,false,true,1030
+12,1201,NCENTRAL_BACKUP_ALL,Full control over backing-up and restoring N-able N-central,false,,true,true,1031
+12,1202,NCENTRAL_DEFAULTS_ALL,"Full control over everything in system defaults, regardless of area it belongs to",false,,false,true,1032
+12,1204,NCENTRAL_ADMIN_TOOLS_ALL,"Full control over network/mail setup, disk tools and other server tools",false,,true,true,1034
+13,1302,BACKUP_MANAGER_PROFILES_VIEW,Read-only permission for Backup Manager Profiles,true,1303,false,true,1036
+13,1303,BACKUP_MANAGER_PROFILES_ALL,Full control over Backup Manager Profiles,false,,false,true,1036
+1,1401,BRANDING_ALL,BRANDING_ALL,false,,false,true,1037
+15,1502,APPLICATION_COMPLIANCE_ALL,Full control over application compliance,false,,false,true,1039
+15,1503,APPLICATION_COMPLIANCE_VIEW,Read-only permission to view application compliance,true,1502,false,true,1039
+15,1504,LICENSE_COMPLIANCE_ALL,Full control over license compliance,false,,false,true,1040
+16,1601,NOTIFICATION_TEMPLATES_ALL,Full control over notification templates,false,,false,true,1041
+16,1602,NOTIFICATION_PROFILES_ALL,Full control over notification profiles,false,,false,true,1042
+16,1603,NOTIFICATION_PROFILES_VIEW,Read-only permission to view notification profiles.,true,1602,false,true,1042
+16,1604,NOTIFICATION_GLOBAL_CONTROL_ALL,Full control over notifications being sent.,false,,false,true,1043
+16,1605,NOTIFICATIONS_SOFTWARE_UPGRADES_ALL,Full control over notifications on software upgrades.,false,,false,true,1044
+3,1701,ACTIVE_ISSUES_VIEW,Allowed to view active issues page,true,,false,false,1045
+17,1702,SERVICE_CONTROL_ALL,Permission to enable/diable services.,false,,false,true,1046
+17,1703,SERVICE_ALL,Full control over service instantiation/configuration on devices,false,,false,true,1047
+17,1704,SERVICE_VIEW,Allowed to view service instantiation/configuration on devices,true,1703,false,false,1047
+17,1706,SERVICE_TEMPLATES_ALL,Full control over service templates.,false,,false,true,1049
+11,1203,NCENTRAL_SUPPORT_TOOLS_ALL,"Full control over logs, code drops, session timeout and other support tools",false,,false,true,1033
+8,802,REPORT_MANAGER_ALL,Access to Report Manager Interface,false,,false,false,1022
+17,306,DEVICE_FILTERS_ALL,Full control over device filters,false,,false,false,1006
+17,307,DEVICE_FILTERS_VIEW,Allowed to view device filters,true,306,false,false,1006
+17,305,DEVICE_RULES_VIEW,Allowed to view device rules,true,304,false,true,1005
+26,1402,CUSTOM_PROPERTY_ADMIN,Manage Custom Property,false,,false,true,2038
+20,2008,DIRECT_SUPPORT_PRINTERS_ALL,full control over reactive-tool printers,false,,false,false,2008
+20,2009,DIRECT_SUPPORT_PROCESSES_ALL,full control over reactive-tool processes,false,,false,false,2009
+20,2010,DIRECT_SUPPORT_REGISTRY_ALL,full control over reactive-tool registry,false,,false,false,2010
+20,2011,DIRECT_SUPPORT_SERVICES_ALL,full control over reactive-tool services,false,,false,false,2011
+20,2012,DIRECT_SUPPORT_STARTUP_APPLICATIONS_ALL,full control over reactive-tool startup applications,false,,false,false,2012
+21,2101,REMOTE_CONTROL_SETTINGS_ALL,full control over remote control settings,false,,false,false,2101
+21,2102,REMOTE_CONTROL_CUSTOM_ALL,permission to use custom remote control,false,,false,false,2102
+21,2104,REMOTE_CONTROL_REMOTE_DESKTOP_ALL,permission to use Remote Desktop,false,,false,false,2104
+21,2105,REMOTE_CONTROL_WEB_ALL,permission to use Web Remote Control,false,,false,false,2105
+21,2106,PROPERTY_LOCK_ALL,full control to un/lock remote control properties,false,,false,true,2106
+21,2108,REMOTE_CONTROL_SSH_ALL,permission to use SSH Remote Control,false,,false,false,2108
+21,2109,REMOTE_CONTROL_TELNET_ALL,permission to use Telnet Remote Control,false,,false,false,2109
+28,3511,APPLE_DEVICE_MANAGEMENT_CERTIFICATES_ALL,Allow access to Device Management for Apple certificates wizard,false,,false,false,3510
+28,3512,APPLE_DEVICE_MANAGEMENT_CERTIFICATES_VIEW,Allow access to Device Management for Apple certificates wizard,true,3511,false,false,3510
+23,2301,MSP_BACKUP_PROFILES_ALL,Full control of N-able Backup Profiles,false,,false,true,2110
+23,2302,MSP_BACKUP_DASHBOARD_ALL,Access to the N-able Backup Dashboard,false,,false,false,2111
+23,2303,MSP_BACKUP_PASSPHRASE_VIEW,Allow access to the N-able Backup device passphrase,true,,false,false,2112
+12,1206,NETPATH_ALL,Full control of NetPath,false,,false,false,2114
+12,1207,NETPATH_VIEW,Read-Only for NetPath,true,1206,false,false,2114
+26,1403,CUSTOM_PROPERTIES_USE,Use Custom Property,false,,false,false,2039
+26,1404,CUSTOM_PROPERTIES_VIEW,View Custom Property,true,1403,false,false,2039
+12,1011,TOPOLOGY_JOBS_VIEW,Allowed to view topology jobs,true,1012,false,true,2115
+12,1012,TOPOLOGY_JOBS_ALL,Allowed full control over topology jobs,false,,false,true,2115
+7,712,SECURITY_MANAGER_RECOVERY_KEY_REPORT,Access to (ability to generate) the Recovery Key Report in Disk Encryption Manager for Security Manager,false,,false,false,1059
+7,711,SECURITY_MANAGER_DISK_ENCRYPTION_RECOVERY_KEY,Full control of Disk Encryption Manager (Recovery Key Management) for Security Manager,false,,false,false,1058
+27,921,NCENTRAL_REPORTS_DATA_EXPORT,Allow enabling and disabling data export for reports,false,,false,true,1061
+12,1208,NCENTRAL_INTEGRATION_MANAGEMENT,Full control of the Integration Management,false,,false,false,1060
+12,2501,INTEGRATION_SENTINELONE_CONFIG_VIEW,Allowed to view SentinelOne configuration,true,2502,false,true,2500
+12,2502,INTEGRATION_SENTINELONE_CONFIG_ALL,Allowed full control over SentinelOne configuration,false,,false,true,2500
+4,311,LAN_DEVICE_UPDATE_ASSET_INFO_ALL,Allowed to manage Update Asset Info,false,,false,false,1063
+4,2601,REGISTRATION_TOKENS_ALL,Allow to manage Registration Tokens,false,,false,false,2600
+27,923,NCENTRAL_REPORTS_ADVANCED_ALL,Allow to manage advanced reports,false,,false,false,1062
+27,922,NCENTRAL_REPORTS_ADVANCED_VIEW,Allow to view advanced reports,true,923,false,false,1062
+12,2801,INTEGRATION_INTUNE_CONFIG_VIEW,Allowed to view Intune configuration,true,2802,false,true,2800
+12,2802,INTEGRATION_INTUNE_CONFIG_ALL,Allowed full control over Intune configuration,false,,false,true,2800
+12,2701,INTEGRATION_DNS_FILTER_CONFIG_VIEW,Allowed to view DNS Filtering configuration,true,2702,false,true,2700
+12,2702,INTEGRATION_DNS_FILTER_CONFIG_ALL,Allowed full control over DNS Filtering configuration,false,,false,true,2700
+2,203,ROLES_ALL,Allow to manage roles,false,,false,true,2900
+2,204,ROLES_VIEW,Allow to view roles,true,203,false,true,2900
+2,205,ACCESS_GROUPS_ALL,Allow to manage access groups,false,,false,true,2901
+2,206,ACCESS_GROUPS_VIEW,Allow to view access groups,true,205,false,true,2901
+30,4015,VULNERABILITY_MANAGEMENT_VIEW,Read-only permission to allow users to view vulnerabilities,true,,false,true,4014
+31,4020,ECOVERSE_SCRIPT_REPOSITORY_ALL,All permission to allow users to view scripting repository,false,,false,true,4016
+31,4021,ECOVERSE_SCRIPT_REPOSITORY_VIEW,Read-only permission to allow users to view scripting repository,true,4020,false,true,4016
+31,4022,ECOVERSE_SCRIPT_REPOSITORY_SCRIPT_EXECUTION,Permission to allow users to perform script execution,false,,false,true,4017
+31,4023,ECOVERSE_SCRIPT_REPOSITORY_TASKS_MANAGEMENT_ALL,Permission to allow users to manage script repository task management,false,,false,true,4018
+31,4024,ECOVERSE_SCRIPT_REPOSITORY_TASKS_MANAGEMENT_VIEW,Read-only permission to allow users to view script repository task management,true,4023,false,true,4018
+12,1,GLOBAL_SEARCH_USE,Full permission to allow users to use Global Search (Find Anything),false,,false,true,1
+12,1205,NCENTRAL_CERTIFICATE_ALL,Full control over N-able N-central certificates,false,,true,true,1035
+1,101,CUSTOMER_ORGANIZATION_ALL,Allowed to create newcustomer organization,false,,false,true,1001
+2,201,USERS_ALL,Full control over User Accounts,false,,false,true,1002
+2,202,USERS_VIEW,Allowed to view User Account,true,201,false,true,1002
+3,303,ALL_DEVICE_VIEW,Allowed to view all devices page,true,,false,false,1004
+17,304,DEVICE_RULES_ALL,Full control over device rules,false,,false,true,1005
+4,308,DEVICE_DOWNTIME_ALL,full control over device downtime,false,,false,false,1007
+17,1707,SERVICE_TEMPLATES_VIEW,Allowed to view service templates.,true,1706,false,true,1049
+17,1708,CUSTOM_SERVICE_ALL,CUSTOM_SERVICE_ALL,false,,false,true,1050
+17,1709,ALERTS_ACKNOWLEDGE_ALL,permission to acknowledge active issues alerts,false,,false,false,1051
+19,1901,PSA_INTEGRATION_ALL,Full control over PSA Integration,false,,false,true,1054
+19,1902,TICKETING_ALL,permission to manage PSA tickets,false,1901,false,false,1055
+20,2001,DIRECT_SUPPORT_APPLICATIONS_ALL,full control over reactive-tool applications,false,,false,false,2001
+20,2002,DIRECT_SUPPORT_TASK_EXECUTION_ALL,full control over reactive-tool automation policies,false,,false,false,2002
+20,2003,DIRECT_SUPPORT_COMMAND_PROMPT_ALL,full control over reactive-tool command prompt,false,,false,false,2003
+25,2004,DIRECT_SUPPORT_DOMAIN_USER_MANAGEMENT_ALL,full control over reactive-tool domain user management,false,,false,true,2004
+20,2005,DIRECT_SUPPORT_FILE_SYSTEM_ALL,full control over reactive-tool file system,false,,false,false,2005
+20,2007,DIRECT_SUPPORT_POWER_MANAGEMENT_ALL,full control over reactive-tool power management,false,,false,false,2007
+4,1813,LAN_DEVICE_MANAGEMENT_ADD,Add management of LAN Devices,false,,false,true,1101
+4,1814,LAN_DEVICE_MANAGEMENT_DELETE,Delete management of LAN Devices,false,,false,true,1102
+4,1815,LAN_DEVICE_MANAGEMENT_MOVE,Move management of LAN Devices,false,,false,true,1103
+18,1833,MOBILE_DEVICE_MANAGEMENT_ADD,Add management of Mobile Devices,false,,false,true,1201
+18,1834,MOBILE_DEVICE_MANAGEMENT_DELETE,Delete management of Mobile Devices,false,,false,true,1202
+22,1853,SAAS_DEVICE_MANAGEMENT_ADD,Add management of SAAS Devices,false,,false,true,1301
+22,1854,SAAS_DEVICE_MANAGEMENT_DELETE,Delete management of SAAS Devices,false,,false,true,1302
+14,1111,NCENTRAL_INSTALLERS_DOWNLOAD_ALL,Allowed to download N-central Installers,false,,false,true,1401
+28,3521,APPLE_DEVICE_MANAGEMENT_PROFILE_DEPLOYMENT_ALL,Allow access to Device Management for Apple profile deployment tab,false,,false,false,3520
+28,3522,APPLE_DEVICE_MANAGEMENT_PROFILE_DEPLOYMENT_VIEW,Allow access to Device Management for Apple profile deployment tab,true,3521,false,false,3520
+28,3531,APPLE_DEVICE_MANAGEMENT_PROFILE_LIBRARY_ALL,Allow access to Device Management for Apple profile library tab,false,,false,false,3530
+28,3532,APPLE_DEVICE_MANAGEMENT_PROFILE_LIBRARY_VIEW,Allow access to Device Management for Apple profile library tab,true,3531,false,false,3530
+28,3541,APPLE_DEVICE_MANAGEMENT_COMMANDS_ALL,Allow execution of Device Management for Apple commands,false,,false,false,3540
+28,3542,APPLE_DEVICE_MANAGEMENT_COMMANDS_VIEW,Allow access to Device Management for Apple commands,true,3541,false,false,3540
+29,3601,CLOUD_ASSET_MANAGER_ALERTS_VIEW,Allow access to Cloud Asset Manager Alerts,true,,false,true,3600
+29,3611,CLOUD_ASSET_MANAGER_AUDIT_VIEW,Allow access to Cloud Asset Manager Audit,true,,false,true,3610
+29,3621,CLOUD_ASSET_MANAGER_BACKUP_JOBS_VIEW,Allow access to Cloud Asset Manager Backup Jobs,true,,false,true,3620
+29,3631,CLOUD_ASSET_MANAGER_VIEW,Allow access to Cloud Asset Manager Dashboard/Asset List,true,,false,true,3630
+29,3641,CLOUD_ASSET_MANAGER_SETUP_ALL,Allow access to Cloud Asset Manager Setup,false,,false,true,3640
+23,2311,COVE_BACKUP_VIEW,Allow access to Cove Backup tab,false,,false,true,3100
+15,4011,SYSLOG_AUDIT_EXPORT_SETTINGS,Allow access to Syslog Audit Export settings,false,,false,false,4010
+21,2103,REMOTE_CONTROL_MSP_CONNECT_ALL,permission to use Take Control remote control,false,,false,false,2103
+14,3001,AGENT_LOGS_DOWNLOAD_ALL,Allowed to download agent logs,false,,false,false,3000
+12,2121,SYSTEM_SETTINGS_ALL,Allow to access System Settings,false,,false,false,2120
+4,1812,LAN_DEVICE_SETTINGS_VIEW,Read-Only for LAN Devices,true,1811,false,false,1100
+18,1831,MOBILE_DEVICE_SETTINGS_ALL,Full control of settings for Mobile Devices,false,,false,false,1200
+18,1832,MOBILE_DEVICE_SETTINGS_VIEW,Read-Only for Mobile Devices,true,1831,false,false,1200
+22,1851,SAAS_DEVICE_SETTINGS_ALL,Full control of settings for SAAS Devices,false,,false,false,1300
+22,1852,SAAS_DEVICE_SETTINGS_VIEW,Read-Only for SAAS Devices,true,1851,false,false,1300
+28,3551,APPLE_DEVICE_MANAGEMENT_APPS_AND_BOOKS_ALL,Allow installation of Apps & Books in Device Management for Apple,false,,false,false,3550
+28,3552,APPLE_DEVICE_MANAGEMENT_APPS_AND_BOOKS_VIEW,Allow view access to Apps & Books in Device Management for Apple,true,3551,false,false,3550
+28,3561,DMA_APPLE_BUSINESS_MANAGER_ALL,Allow full access to Apple Business Manger in Device Management for Apple,false,,false,false,3560
+4,1811,LAN_DEVICE_SETTINGS_ALL,Full control of settings for LAN Devices,false,,false,false,1100
+28,3562,DMA_APPLE_BUSINESS_MANAGER_VIEW,Allow view access to Apple Business Manger in Device Management for Apple,true,3561,false,false,3560
+21,4001,TWO_WAY_CHAT_ALL,Allow access to the Two Way Chat feature,false,,false,false,4000
+16,1606,NOTIFICATION_HIGHER_LEVEL_RECIPIENTS_ALL,Show higher level recipients in notifications,false,,false,false,1070
+32,4030,CLOUD_CUSTOMERS_ALL,All permission to allow users to manage cloud customers,false,,false,true,4032
+32,4031,CLOUD_CUSTOMERS_VIEW,Read-only permission to allow users to view cloud customers,true,4030,false,true,4032
+32,4033,CLOUD_USERS_ALL,All permission to allow users to manage cloud users,false,,false,true,4035
+32,4034,CLOUD_USERS_VIEW,Read-only permission to allow users to view cloud users,true,4033,false,true,4035
+32,4036,CLOUD_USERS_ACCOUNT_CONTROLS_ALL,Permission to allow users to manage cloud users account controls,false,,false,true,4037
+26,1402,CUSTOM_PROPERTIES_ADMIN,Alias for CUSTOM_PROPERTY_ADMIN,false,,false,true,2038
+7,711,SECURITY_MANAGER_DISK_ENCRYPTION_RECOVERY_KEY_ALL,Alias for SECURITY_MANAGER_DISK_ENCRYPTION_RECOVERY_KEY,false,,false,false,1058
+7,712,SECURITY_MANAGER_DISK_ENCRYPTION_RECOVERY_KEY_REPORT_ALL,Alias for SECURITY_MANAGER_RECOVERY_KEY_REPORT,false,,false,false,1059
+12,1208,NCENTRAL_INTEGRATION_MANAGEMENT_ALL,Alias for NCENTRAL_INTEGRATION_MANAGEMENT,false,,false,false,1060
+15,4011,SYSLOG_AUDIT_EXPORT,Alias for SYSLOG_AUDIT_EXPORT_SETTINGS,false,,false,false,4010

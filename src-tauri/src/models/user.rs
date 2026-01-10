@@ -1,5 +1,5 @@
+use crate::models::common::{option_string_or_i64, serialize_vec_to_string, string_or_i64};
 use serde::{Deserialize, Serialize};
-use crate::models::common::{string_or_i64, option_string_or_i64, serialize_vec_to_string};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +30,8 @@ pub struct User {
     #[serde(serialize_with = "serialize_vec_to_string")]
     pub customer_tree: Vec<String>,
     pub created_on: Option<String>,
+    #[serde(default, deserialize_with = "option_string_or_i64")]
+    pub org_unit_id: Option<i64>,
     #[serde(default, deserialize_with = "option_string_or_i64")]
     pub service_org_id: Option<i64>,
 }

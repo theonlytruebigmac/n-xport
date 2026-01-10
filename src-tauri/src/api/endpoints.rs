@@ -8,26 +8,26 @@ pub mod paths {
     pub const AUTH_AUTHENTICATE: &str = "/api/auth/authenticate";
     pub const AUTH_REFRESH: &str = "/api/auth/refresh";
     pub const AUTH_VALIDATE: &str = "/api/auth/validate";
-    
+
     // Server info
     pub const SERVER_INFO: &str = "/api/server-info";
     pub const HEALTH: &str = "/api/health";
-    
+
     // Service Organizations
     pub const SERVICE_ORGS: &str = "/api/service-orgs";
-    
+
     // Customers
     pub const CUSTOMERS: &str = "/api/customers";
-    
+
     // Sites
     pub const SITES: &str = "/api/sites";
-    
+
     // Devices
     pub const DEVICES: &str = "/api/devices";
-    
+
     // Organization Units
     pub const ORG_UNITS: &str = "/api/org-units";
-    
+
     // Users
     pub const USERS: &str = "/api/users";
 
@@ -50,9 +50,19 @@ pub fn service_org_sites(_so_id: i64) -> String {
     format!("/api/sites")
 }
 
-/// Build URL for org unit access groups
+/// Build URL for org unit access groups (GET list)
 pub fn org_unit_access_groups(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/access-groups", org_unit_id)
+}
+
+/// Build URL for creating org unit type access groups
+pub fn org_unit_access_groups_create(org_unit_id: i64) -> String {
+    format!("/api/org-units/{}/org-unit-access-groups", org_unit_id)
+}
+
+/// Build URL for creating device type access groups
+pub fn device_access_groups_create(org_unit_id: i64) -> String {
+    format!("/api/org-units/{}/device-access-groups", org_unit_id)
 }
 
 /// Build URL for org unit user roles

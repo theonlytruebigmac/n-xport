@@ -29,6 +29,8 @@ function App() {
   // Form state
   const [fqdn, setFqdn] = useState('');
   const [jwt, setJwt] = useState('');
+  const [apiUsername, setApiUsername] = useState('');
+  const [apiPassword, setApiPassword] = useState('');
   const [serviceOrgId, setServiceOrgId] = useState('');
   const [outputDir, setOutputDir] = useState('../nc_export');
   const [newProfileName, setNewProfileName] = useState('');
@@ -41,6 +43,7 @@ function App() {
 
   // Logs
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [verboseLogging, setVerboseLogging] = useState<boolean>(false);
   const isInitialLoad = useRef(false);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -62,6 +65,8 @@ function App() {
   const [destConnectedServiceOrg, setDestConnectedServiceOrg] = useState<{ id: number, name: string } | null>(null);
   const [destFqdn, setDestFqdn] = useState('');
   const [destJwt, setDestJwt] = useState('');
+  const [destApiUsername, setDestApiUsername] = useState('');
+  const [destApiPassword, setDestApiPassword] = useState('');
   const [destServiceOrgId, setDestServiceOrgId] = useState('');
 
   // App version
@@ -85,15 +90,18 @@ function App() {
       const active = await api.getActiveProfile();
       if (active) {
         setActiveProfile(active);
-        setFqdn(active.fqdn);
-        if (active.serviceOrgId) {
-          setServiceOrgId(active.serviceOrgId.toString());
+        setFqdn(active.source.fqdn);
+        if (active.source.serviceOrgId) {
+          setServiceOrgId(active.source.serviceOrgId.toString());
         }
 
-        // Also load JWT for the active profile
+        // Also load credentials for the active profile
         try {
           const storedJwt = await api.getCredentials(active.name);
           if (storedJwt) setJwt(storedJwt);
+          const storedPwd = await api.getPassword(active.name);
+          if (storedPwd) setApiPassword(storedPwd);
+          setApiUsername(active.source.username || '');
         } catch (e) {
           // Ignore error loading creds
         }
@@ -103,18 +111,18 @@ function App() {
         if (has) {
           setConnectionStatus('connecting');
           addLog('info', `Connecting with saved credentials for ${active.name}...`);
-          const result = await api.connectWithProfile(active.name, active.fqdn);
+          const result = await api.connectWithProfile(active.name, active.source.fqdn, active.source.username);
           if (result.success) {
             setConnectionStatus('connected');
             setServerVersion(result.serverVersion || '');
-            setServerUrl(result.serverUrl || active.fqdn);
+            setServerUrl(result.serverUrl || active.source.fqdn);
             // Resolve Service Org
             let finalSoId = result.serviceOrgId;
             let finalSoName = result.serviceOrgName;
 
             // Check if profile has a specific SO ID
-            if (active.serviceOrgId) {
-              finalSoId = active.serviceOrgId;
+            if (active.source.serviceOrgId) {
+              finalSoId = active.source.serviceOrgId;
               if (finalSoId !== result.serviceOrgId) {
                 try {
                   const info = await api.getServiceOrgInfo(finalSoId);
@@ -133,8 +141,46 @@ function App() {
               addLog('info', `Target Service Org: ${finalSoName} (ID: ${finalSoId})`);
             }
 
-            addLog('success', `Connected to ${result.serverUrl || active.fqdn}`);
+            addLog('success', `Connected to ${result.serverUrl || active.source.fqdn}`);
             if (result.serverVersion) addLog('info', `Server version: ${result.serverVersion}`);
+
+            // Handle Destination if present (migration profile)
+            if (active.type === 'migration' && active.destination) {
+              setAppMode('migrate');
+              setDestFqdn(active.destination.fqdn);
+              if (active.destination.serviceOrgId) {
+                setDestServiceOrgId(active.destination.serviceOrgId.toString());
+              }
+
+              // Load dest creds
+              try {
+                setDestApiUsername(active.destination.username || '');
+                const storedDestJwt = await api.getCredentials(`${active.name}_dest`);
+                if (storedDestJwt) {
+                  setDestJwt(storedDestJwt);
+                  const storedDestPwd = await api.getPassword(`${active.name}_dest`);
+                  if (storedDestPwd) setDestApiPassword(storedDestPwd);
+
+                  addLog('info', `Connecting to stored destination: ${active.destination.fqdn}...`);
+                  const destRes = await api.connectDestination(active.destination.fqdn, storedDestJwt, active.destination.username);
+                  if (destRes.success) {
+                    setDestConnectionStatus('connected');
+                    setDestServerVersion(destRes.serverVersion || '');
+                    setDestServerUrl(destRes.serverUrl || active.destination.fqdn);
+                    if (destRes.serviceOrgId) {
+                      setDestConnectedServiceOrg({
+                        id: destRes.serviceOrgId,
+                        name: destRes.serviceOrgName || 'Unknown'
+                      });
+                    }
+                    addLog('success', `Connected to destination: ${active.destination.fqdn}`);
+                  }
+                }
+              } catch (e) {
+                // ignore
+              }
+            }
+
             setCurrentStep('configure');
           } else {
             setConnectionStatus('disconnected');
@@ -169,12 +215,14 @@ function App() {
   };
 
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
+    // Store ALL logs, filtering happens at display time
     setLogs(prev => {
       // Don't add duplicate consecutive logs
       if (prev.length > 0 && prev[prev.length - 1].message === message) {
         return prev;
       }
-      return [...prev.slice(-99), {
+      // Keep last 2000 logs
+      return [...prev.slice(-1999), {
         timestamp: new Date(),
         level,
         message
@@ -182,9 +230,18 @@ function App() {
     });
   }, []);
 
+
+
   const handleConnect = async () => {
     if (!fqdn || !jwt) {
       addLog('error', 'Please enter server FQDN and JWT token');
+      // Note: Username/Password are optional for strict REST, but user wants them mandatory. 
+      // We will warn if missing but maybe allow if user persists? 
+      // User said: "make API Username and Password mandatory".
+      if (!apiUsername || !apiPassword) {
+        addLog('error', 'API Username and Password are required');
+        return;
+      }
       return;
     }
 
@@ -192,7 +249,7 @@ function App() {
     addLog('info', `Connecting to ${fqdn}...`);
 
     try {
-      const result = await api.testConnection(fqdn, jwt);
+      const result = await api.testConnection(fqdn, jwt, apiUsername);
 
       if (result.success) {
         setConnectionStatus('connected');
@@ -265,23 +322,46 @@ function App() {
     }
 
     try {
+      // Consider it a migration profile if in migrate mode AND destination FQDN is set
+      const isMigration = appMode === 'migrate' && destFqdn;
+
       const profile: Profile = {
         name: newProfileName,
-        fqdn: fqdn,
-        serviceOrgId: serviceOrgId ? parseInt(serviceOrgId) : undefined
+        type: isMigration ? 'migration' : 'export',
+        source: {
+          fqdn: fqdn,
+          username: apiUsername,
+          serviceOrgId: serviceOrgId ? parseInt(serviceOrgId) : undefined
+        },
+        destination: isMigration ? {
+          fqdn: destFqdn,
+          username: destApiUsername,
+          serviceOrgId: destConnectedServiceOrg?.id || (destServiceOrgId ? parseInt(destServiceOrgId) : undefined)
+        } : undefined,
+        lastUsed: new Date().toISOString()
       };
 
       await api.saveProfile(profile);
       await api.setActiveProfile(newProfileName);
 
+      // Save source credentials
       if (jwt) {
         await api.saveCredentials(newProfileName, jwt);
+        addLog('debug', `Saved source credentials for ${newProfileName}`);
       }
+
+      // Save dest credentials if present
+      if (isMigration && destJwt) {
+        await api.saveCredentials(`${newProfileName}_dest`, destJwt);
+        addLog('debug', `Saved destination credentials for ${newProfileName}_dest`);
+      }
+
+      await loadProfiles(); // Reload to update list
+      setActiveProfile(profile);
 
       addLog('success', `Profile "${newProfileName}" saved`);
       setNewProfileName('');
       setShowNewProfile(false);
-      await loadProfiles();
     } catch (e) {
       addLog('error', `Failed to save profile: ${e}`);
     }
@@ -289,9 +369,24 @@ function App() {
 
   const handleSelectProfile = async (profile: Profile) => {
     setActiveProfile(profile);
-    setFqdn(profile.fqdn);
-    if (profile.serviceOrgId) {
-      setServiceOrgId(profile.serviceOrgId.toString());
+    setFqdn(profile.source.fqdn);
+    if (profile.source.serviceOrgId) {
+      setServiceOrgId(profile.source.serviceOrgId.toString());
+    } else {
+      setServiceOrgId('');
+    }
+
+    // Set mode based on profile type
+    if (profile.type === 'migration') {
+      setAppMode('migrate');
+      if (profile.destination) {
+        setDestFqdn(profile.destination.fqdn);
+        if (profile.destination.serviceOrgId) {
+          setDestServiceOrgId(profile.destination.serviceOrgId.toString());
+        }
+      }
+    } else {
+      setAppMode('export');
     }
 
     // Try to load JWT from keychain to populate the field
@@ -299,11 +394,39 @@ function App() {
       const storedJwt = await api.getCredentials(profile.name);
       if (storedJwt) {
         setJwt(storedJwt);
+        const storedPwd = await api.getPassword(profile.name);
+        setApiPassword(storedPwd || '');
+        setApiUsername(profile.source.username || '');
       } else {
         setJwt('');
+        setApiUsername('');
+        setApiPassword('');
       }
     } catch (e) {
       setJwt('');
+      setApiUsername('');
+      setApiPassword('');
+    }
+
+    // Also load destination JWT if migration profile
+    if (profile.type === 'migration') {
+      try {
+        const storedDestJwt = await api.getCredentials(`${profile.name}_dest`);
+        if (storedDestJwt) {
+          setDestJwt(storedDestJwt);
+          const storedDestPwd = await api.getPassword(`${profile.name}_dest`);
+          setDestApiPassword(storedDestPwd || '');
+          setDestApiUsername(profile.destination?.username || '');
+        } else {
+          setDestJwt('');
+          setDestApiUsername('');
+          setDestApiPassword('');
+        }
+      } catch (e) {
+        setDestJwt('');
+        setDestApiUsername('');
+        setDestApiPassword('');
+      }
     }
 
     try {
@@ -314,19 +437,19 @@ function App() {
       if (hasCreds) {
         setConnectionStatus('connecting');
         addLog('info', `Connecting with saved credentials for ${profile.name}...`);
-        const result = await api.connectWithProfile(profile.name, profile.fqdn);
+        const result = await api.connectWithProfile(profile.name, profile.source.fqdn);
         if (result.success) {
           setConnectionStatus('connected');
           setServerVersion(result.serverVersion || '');
-          setServerUrl(result.serverUrl || profile.fqdn);
+          setServerUrl(result.serverUrl || profile.source.fqdn);
           // Resolve Service Org
           let finalSoId = result.serviceOrgId;
           let finalSoName = result.serviceOrgName;
 
           // Check if profile has a specific SO ID
-          if (profile.serviceOrgId) {
-            finalSoId = profile.serviceOrgId;
-            if (finalSoId !== result.serviceOrgId) {
+          if (profile.source.serviceOrgId) {
+            finalSoId = profile.source.serviceOrgId;
+            if (finalSoId !== result.serviceOrgId && finalSoId) {
               try {
                 const info = await api.getServiceOrgInfo(finalSoId);
                 finalSoName = info.name;
@@ -344,7 +467,7 @@ function App() {
             addLog('info', `Target Service Org: ${finalSoName} (ID: ${finalSoId})`);
           }
 
-          addLog('success', `Connected to ${result.serverUrl || profile.fqdn}`);
+          addLog('success', `Connected to ${result.serverUrl || profile.source.fqdn}`);
           if (result.serverVersion) addLog('info', `Server version: ${result.serverVersion}`);
           setCurrentStep('configure');
         } else {
@@ -449,10 +572,15 @@ function App() {
         deviceProperties: selectedTypes.has('device_properties'),
       };
 
+      // Use user-specified destination SO ID if set, otherwise use connected SO
+      const actualDestSoId = destServiceOrgId ? parseInt(destServiceOrgId) : destConnectedServiceOrg.id;
+
+      addLog('info', `Starting migration: Source SO ${parseInt(serviceOrgId)} → Destination SO ${actualDestSoId}`);
+
       const result = await api.startMigration(
         options,
         parseInt(serviceOrgId),
-        destConnectedServiceOrg.id
+        actualDestSoId
       );
 
       if (result.success) {
@@ -506,7 +634,10 @@ function App() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
                   <span className="badge badge-info">Source</span>
                   <div className={`status-indicator ${connectionStatus === 'connected' ? 'connected' : ''}`} />
-                  <span className="form-label" style={{ marginBottom: 0, fontSize: '0.75rem' }}>{serverUrl || (connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected')}</span>
+                  <span className="form-label" style={{ marginBottom: 0, fontSize: '0.75rem' }}>
+                    {serverUrl || (connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected')}
+                    {serverVersion && ` (v${serverVersion})`}
+                  </span>
                 </div>
                 <div style={{ height: '16px', width: '1px', background: 'var(--color-border)' }} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
@@ -617,8 +748,8 @@ function App() {
                         onClick={() => handleSelectProfile(profile)}
                       >
                         <div className="profile-info">
-                          <span className="profile-name">{profile.name}</span>
-                          <span className="profile-fqdn">{profile.fqdn}</span>
+                          <span className="profile-name">{profile.name}{profile.type === 'migration' ? ' 🔄' : ''}</span>
+                          <span className="profile-fqdn">{profile.source.fqdn}</span>
                         </div>
                         <button
                           className="profile-delete"
@@ -671,6 +802,16 @@ function App() {
                     />
                   </div>
                   <div className="form-group">
+                    <label className="form-label">API Username <span className="text-secondary" style={{ fontSize: '0.7em' }}>(Required for User Add)</span></label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="admin@example.com"
+                      value={apiUsername}
+                      onChange={e => setApiUsername(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group">
                     <label className="form-label">JWT Token</label>
                     <input
                       type="password"
@@ -717,6 +858,16 @@ function App() {
                       />
                     </div>
                     <div className="form-group">
+                      <label className="form-label">API Username <span className="text-secondary" style={{ fontSize: '0.7em' }}>(Required for User Add)</span></label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="admin@example.com"
+                        value={destApiUsername}
+                        onChange={e => setDestApiUsername(e.target.value)}
+                      />
+                    </div>
+                    <div className="form-group">
                       <label className="form-label">JWT Token</label>
                       <input
                         type="password"
@@ -740,10 +891,14 @@ function App() {
                       className="btn btn-primary btn-lg"
                       style={{ width: '100%' }}
                       onClick={async () => {
+                        if (!destFqdn || !destJwt || !destApiUsername) {
+                          addLog('error', 'Please enter all Destination fields (FQDN, JWT, Username)');
+                          return;
+                        }
                         setDestConnectionStatus('connecting');
                         addLog('info', `Connecting to Destination: ${destFqdn}...`);
                         try {
-                          const result = await api.testConnection(destFqdn, destJwt);
+                          const result = await api.connectDestination(destFqdn, destJwt, destApiUsername);
                           if (result.success) {
                             setDestConnectionStatus('connected');
                             setDestServerUrl(result.serverUrl || destFqdn);
@@ -804,15 +959,17 @@ function App() {
               </div>
 
               <div className="grid-2">
-                <div className="form-group">
-                  <label className="form-label">Target Service Org ID</label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    value={serviceOrgId}
-                    onChange={e => setServiceOrgId(e.target.value)}
-                  />
-                </div>
+                {appMode !== 'migrate' && (
+                  <div className="form-group">
+                    <label className="form-label">Target Service Org ID</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={serviceOrgId}
+                      onChange={e => setServiceOrgId(e.target.value)}
+                    />
+                  </div>
+                )}
                 {appMode !== 'migrate' && (
                   <div className="form-group">
                     <label className="form-label">Output Directory</label>
@@ -887,13 +1044,51 @@ function App() {
               )}
 
               <div className="live-logs">
-                <div className="logs-header">Activity Log</div>
+                <div className="logs-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Activity Log</span>
+                  <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', fontSize: '0.75rem', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={verboseLogging}
+                        onChange={(e) => setVerboseLogging(e.target.checked)}
+                        style={{ width: '14px', height: '14px' }}
+                      />
+                      Verbose
+                    </label>
+                    <button
+                      className="btn btn-ghost"
+                      style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                      onClick={async () => {
+                        const { save } = await import('@tauri-apps/plugin-dialog');
+                        const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+                        const filePath = await save({
+                          title: 'Export Logs',
+                          defaultPath: `nc-export-logs-${new Date().toISOString().slice(0, 10)}.txt`,
+                          filters: [{ name: 'Text Files', extensions: ['txt'] }]
+                        });
+                        if (filePath) {
+                          const logText = logs.map(l =>
+                            `[${l.timestamp.toLocaleString()}] [${l.level.toUpperCase()}] ${l.message}`
+                          ).join('\n');
+                          await writeTextFile(filePath, logText);
+                          addLog('success', `Logs exported to ${filePath}`);
+                        }
+                      }}
+                    >
+                      Export
+                    </button>
+                  </div>
+                </div>
                 <div className="log-panel" ref={logRef}>
-                  {logs.slice(-50).map((log, i) => (
-                    <div key={i} className={`log-entry ${log.level}`}>
-                      <span className="log-time">[{log.timestamp.toLocaleTimeString()}]</span> {log.message}
-                    </div>
-                  ))}
+                  {logs
+                    .filter(log => verboseLogging || log.level !== 'debug')
+                    .slice(-500)
+                    .map((log, i) => (
+                      <div key={i} className={`log-entry ${log.level}`}>
+                        <span className="log-time">[{log.timestamp.toLocaleTimeString()}]</span> {log.message}
+                      </div>
+                    ))}
                 </div>
               </div>
 
@@ -936,30 +1131,59 @@ function App() {
         <div className="modal-overlay" onClick={() => setShowNewProfile(false)}>
           <div className="card modal-content" onClick={e => e.stopPropagation()}>
             <div className="card-header">
-              <h2 className="card-title">Create New Profile</h2>
+              <h2 className="card-title">
+                {appMode === 'migrate' ? 'Save Migration Profile' : 'Create New Profile'}
+              </h2>
             </div>
             <div className="form-group">
               <label className="form-label">Profile Name</label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="My Server"
+                placeholder={appMode === 'migrate' ? 'My Migration' : 'My Server'}
                 value={newProfileName}
                 onChange={e => setNewProfileName(e.target.value)}
               />
             </div>
-            <div className="form-group">
-              <label className="form-label">Server FQDN</label>
-              <input
-                type="text"
-                className="form-input"
-                placeholder="ncentral.example.com"
-                value={fqdn}
-                onChange={e => setFqdn(e.target.value)}
-              />
-            </div>
+
+            {appMode === 'migrate' ? (
+              <>
+                <div className="form-group" style={{ opacity: 0.8 }}>
+                  <label className="form-label">Source</label>
+                  <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
+                    {fqdn || <span style={{ color: 'var(--color-text-secondary)' }}>Not configured</span>}
+                    {connectedServiceOrg && <span style={{ marginLeft: 'var(--space-sm)', color: 'var(--color-text-secondary)' }}>• {connectedServiceOrg.name}</span>}
+                  </div>
+                </div>
+                <div className="form-group" style={{ opacity: 0.8 }}>
+                  <label className="form-label">Destination</label>
+                  <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
+                    {destFqdn || <span style={{ color: 'var(--color-text-secondary)' }}>Not configured</span>}
+                    {destConnectedServiceOrg && <span style={{ marginLeft: 'var(--space-sm)', color: 'var(--color-text-secondary)' }}>• {destConnectedServiceOrg.name}</span>}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="form-group">
+                <label className="form-label">Server FQDN</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="ncentral.example.com"
+                  value={fqdn}
+                  onChange={e => setFqdn(e.target.value)}
+                />
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-              <button className="btn btn-primary" onClick={handleSaveProfile}>Save Profile</button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSaveProfile}
+                disabled={!newProfileName || !fqdn || (appMode === 'migrate' && !destFqdn)}
+              >
+                Save Profile
+              </button>
               <button className="btn btn-ghost" onClick={() => setShowNewProfile(false)}>Cancel</button>
             </div>
           </div>

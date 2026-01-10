@@ -6,13 +6,15 @@ use tauri::State;
 use tokio::sync::Mutex;
 
 use crate::api::NcClient;
-use crate::config::Settings;
+use crate::api::NcSoapClient;
 use crate::credentials::CredentialStore;
 
 /// Shared client state
 pub struct AppState {
     pub client: Arc<Mutex<Option<NcClient>>>,
     pub dest_client: Arc<Mutex<Option<NcClient>>>,
+    /// SOAP client for destination (for operations not available via REST)
+    pub dest_soap_client: Arc<Mutex<Option<NcSoapClient>>>,
 }
 
 impl Default for AppState {
@@ -20,6 +22,7 @@ impl Default for AppState {
         Self {
             client: Arc::new(Mutex::new(None)),
             dest_client: Arc::new(Mutex::new(None)),
+            dest_soap_client: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -41,9 +44,12 @@ pub struct ConnectionResult {
 pub async fn test_connection(
     fqdn: String,
     jwt: String,
+    _username: Option<String>,
+    _password: Option<String>,
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
     let jwt = jwt.trim().to_string();
+    // ... existing logic (username/password not used for simple REST test yet)
     let base_url = format!(
         "https://{}",
         fqdn.trim_start_matches("https://")
@@ -106,6 +112,7 @@ pub async fn test_connection(
 pub async fn connect_with_profile(
     profile_name: String,
     fqdn: String,
+    username: Option<String>,
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
     // Get JWT from keychain
@@ -133,7 +140,10 @@ pub async fn connect_with_profile(
         }
     };
 
-    test_connection(fqdn, jwt, state).await
+    // Get Password from keychain (optional, ignore errors effectively by treating as None)
+    let password = CredentialStore::get_password(&profile_name).unwrap_or(None);
+
+    test_connection(fqdn, jwt, username, password, state).await
 }
 
 /// Test connection specifically for destination server
@@ -141,6 +151,8 @@ pub async fn connect_with_profile(
 pub async fn connect_destination(
     fqdn: String,
     jwt: String,
+    username: Option<String>,
+    _password: Option<String>,
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
     let jwt = jwt.trim().to_string();
@@ -185,6 +197,15 @@ pub async fn connect_destination(
     // Store destination client
     *state.dest_client.lock().await = Some(client);
 
+    // Initialize & store SOAP client for destination
+    // Pass username if available - JWT is used as password
+    let mut soap_client = NcSoapClient::new(&base_url, &jwt);
+    if let Some(u) = username {
+        soap_client.set_username(&u);
+    }
+
+    *state.dest_soap_client.lock().await = Some(soap_client);
+
     Ok(ConnectionResult {
         success: true,
         message: "Destination connection successful".to_string(),
@@ -195,35 +216,61 @@ pub async fn connect_destination(
     })
 }
 
-/// Save credentials (JWT) for a profile
+/// Save credentials (JWT and optional Password) for a profile
 #[tauri::command]
 pub async fn save_credentials(
     profile_name: String,
     jwt: String,
+    password: Option<String>,
 ) -> std::result::Result<(), String> {
     let jwt = jwt.trim().to_string();
 
-    // Store credentials in OS keyring only (no fallback for security)
-    match CredentialStore::store_jwt(&profile_name, &jwt) {
-        Ok(_) => {
-            tracing::info!(
-                "Successfully saved credentials to keyring for '{}'",
-                profile_name
-            );
-            Ok(())
-        }
-        Err(e) => {
+    // Store JWT
+    if let Err(e) = CredentialStore::store_jwt(&profile_name, &jwt) {
+        tracing::error!(
+            "Failed to save JWT to keyring for '{}': {}",
+            profile_name,
+            e
+        );
+        return Err(format!(
+            "Failed to save credentials: {}. Please ensure your system keyring is available.",
+            e
+        ));
+    }
+
+    // Store Password if provided
+    if let Some(pwd) = password {
+        if let Err(e) = CredentialStore::store_password(&profile_name, &pwd) {
             tracing::error!(
-                "Failed to save credentials to keyring for '{}': {}",
+                "Failed to save password to keyring for '{}': {}",
                 profile_name,
                 e
             );
-            Err(format!(
-                "Failed to save credentials: {}. Please ensure your system keyring is available.",
-                e
-            ))
+            // Don't fail the whole operation, but log error
         }
     }
+
+    // Verification logic
+    tracing::info!(
+        "Successfully saved credentials to keyring for '{}'",
+        profile_name
+    );
+
+    // Optional verification - warn but don't fail if it doesn't work
+    // Linux Secret Service can have timing issues
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    match CredentialStore::get_jwt(&profile_name) {
+        Ok(Some(stored_jwt)) if stored_jwt == jwt => {
+            tracing::debug!("Verification successful for '{}'", profile_name);
+        }
+        _ => {
+            tracing::warn!(
+                "Could not verify credential persistence for '{}'. This may be a keyring timing issue - credentials were likely saved successfully.",
+                profile_name
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Check if credentials exist for a profile
@@ -235,15 +282,7 @@ pub async fn has_credentials(profile_name: String) -> bool {
         _ => {}
     }
 
-    // Check fallback
-    if let Ok(settings) = Settings::load() {
-        if let Some(profile) = settings.profiles.iter().find(|p| p.name == profile_name) {
-            if profile.encrypted_jwt.is_some() {
-                return true;
-            }
-        }
-    }
-
+    // No fallback - keyring only
     false
 }
 
@@ -274,22 +313,29 @@ pub async fn get_credentials(profile_name: String) -> std::result::Result<Option
 pub async fn delete_credentials(profile_name: String) -> std::result::Result<(), String> {
     tracing::info!("Deleting credentials for '{}'", profile_name);
 
-    // Delete from keyring
+    // Delete from keyring only (no fallback)
     let _ = CredentialStore::delete_jwt(&profile_name);
+    let _ = CredentialStore::delete_password(&profile_name);
 
-    // Delete fallback
-    if let Ok(mut settings) = Settings::load() {
-        if let Some(profile) = settings
-            .profiles
-            .iter_mut()
-            .find(|p| p.name == profile_name)
-        {
-            profile.encrypted_jwt = None;
-            let _ = settings.save();
-        }
-    }
+    // Also delete destination credentials if they exist
+    let dest_profile = format!("{}_dest", profile_name);
+    let _ = CredentialStore::delete_jwt(&dest_profile);
+    let _ = CredentialStore::delete_password(&dest_profile);
 
     Ok(())
+}
+
+/// Get password for a profile
+#[tauri::command]
+pub async fn get_password(profile_name: String) -> std::result::Result<Option<String>, String> {
+    // Get password from OS keyring
+    match CredentialStore::get_password(&profile_name) {
+        Ok(pwd) => Ok(pwd),
+        Err(e) => {
+            tracing::warn!("Failed to retrieve password for '{}': {}", profile_name, e);
+            Ok(None)
+        }
+    }
 }
 
 /// Disconnect (clear client)

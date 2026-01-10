@@ -1,13 +1,13 @@
 //! Export-related Tauri commands
 
-use std::path::PathBuf;
-use tauri::{State, Window, Emitter};
 use serde::Serialize;
 use std::collections::HashSet;
+use std::path::PathBuf;
+use tauri::{Emitter, State, Window};
 
 use crate::commands::connection::AppState;
-use crate::models::{ExportOptions, ProgressUpdate};
 use crate::export::{export_to_csv, export_to_json};
+use crate::models::{ExportOptions, ProgressUpdate};
 
 /// Export result
 #[derive(Debug, Serialize)]
@@ -26,10 +26,9 @@ pub async fn open_directory(path: String) -> Result<(), String> {
     // Resolve absolute path to handle relative paths like "./nc_export"
     let abs_path = std::fs::canonicalize(&path)
         .map_err(|e| format!("Directory does not exist yet (run export first): {}", e))?;
-        
+
     tracing::info!("Opening directory: {:?}", abs_path);
-    open::that(abs_path)
-        .map_err(|e| format!("Failed to open directory: {}", e))?;
+    open::that(abs_path).map_err(|e| format!("Failed to open directory: {}", e))?;
     Ok(())
 }
 
@@ -44,7 +43,7 @@ pub async fn start_export(
     state: State<'_, AppState>,
 ) -> std::result::Result<ExportResult, String> {
     let client = state.client.lock().await;
-    
+
     let client = match &*client {
         Some(c) => c,
         None => return Err("Not connected".to_string()),
@@ -53,299 +52,352 @@ pub async fn start_export(
     let output_path = PathBuf::from(&output_dir);
     let export_csv = formats.iter().any(|f| f == "csv");
     let export_json = formats.iter().any(|f| f == "json");
-    
+
     let mut files_created = Vec::new();
     let mut total_records = 0;
-    // Store customer IDs for filtering sites
+
+    // Scan hierarchy if we need deep items
+    let needs_hierarchy = options.sites
+        || options.users
+        || options.devices
+        || options.access_groups
+        || options.user_roles
+        || options.org_properties
+        || options.device_properties;
+
+    let mut valid_ou_ids: HashSet<i64> = HashSet::new();
+    // Also track specific sets for better filtering logic
     let mut customer_ids: HashSet<i64> = HashSet::new();
+    // Store fetched data to avoid re-fetching
+    let mut fetched_service_orgs = Vec::new();
+    let mut fetched_customers = Vec::new();
+    let mut fetched_sites = Vec::new();
 
     // Helper to emit progress
     let emit_progress = |phase: &str, message: &str, percent: f32| {
-        let _ = window.emit("export-progress", ProgressUpdate {
-            phase: phase.to_string(),
-            message: message.to_string(),
-            percent,
-            current: 0,
-            total: 0,
-        });
+        let _ = window.emit(
+            "export-progress",
+            ProgressUpdate {
+                phase: phase.to_string(),
+                message: message.to_string(),
+                percent,
+                current: 0,
+                total: 0,
+            },
+        );
     };
 
-    // Export Service Orgs (just the target one)
-    if options.service_orgs {
-        emit_progress("Service Organizations", "Fetching...", 5.0);
-        
-        match client.get_service_org_by_id(service_org_id).await {
-            Ok(data) => {
-                let data_vec = vec![data];
-                if export_csv {
-                    let path = output_path.join("service_orgs.csv");
-                    match export_to_csv(&data_vec, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export service_orgs.csv: {}", e),
-                    }
-                }
-                if export_json {
-                    let path = output_path.join("service_orgs.json");
-                    match export_to_json(&data_vec, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export service_orgs.json: {}", e),
-                    }
-                }
-                tracing::info!("Finished exporting Service Orgs");
-            }
-            Err(e) => tracing::error!("Failed to export service orgs: {}", e),
-        }
+    // 1. Always start with the Target Service Org
+    valid_ou_ids.insert(service_org_id);
+    match client.get_service_org_by_id(service_org_id).await {
+        Ok(so) => fetched_service_orgs.push(so),
+        Err(e) => tracing::error!("Failed to fetch target Service Org: {}", e),
     }
 
-    // Export Customers
-    if options.customers {
-        emit_progress("Customers", "Fetching...", 15.0);
-        
+    // 2. Scan Hierarchy (Customers & Sites)
+    if needs_hierarchy || options.customers {
+        emit_progress("Discovery", "Scanning Customers...", 5.0);
         match client.get_customers_by_so(service_org_id).await {
-            Ok(data) => {
-                // Store IDs for filtering
-                for c in &data {
+            Ok(customers) => {
+                for c in &customers {
+                    valid_ou_ids.insert(c.customer_id);
                     customer_ids.insert(c.customer_id);
                 }
-                
-                if export_csv {
-                    let path = output_path.join("customers.csv");
-                    match export_to_csv(&data, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export customers.csv: {}", e),
-                    }
-                }
-                if export_json {
-                    let path = output_path.join("customers.json");
-                    match export_to_json(&data, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export customers.json: {}", e),
-                    }
-                }
-                tracing::info!("Finished exporting Customers");
+                fetched_customers = customers;
             }
-            Err(e) => tracing::error!("Failed to export customers: {}", e),
+            Err(e) => tracing::error!("Failed to fetch customers: {}", e),
         }
     }
 
-    // Export Sites (under target SO)
-    if options.sites {
-        emit_progress("Sites", "Fetching...", 25.0);
-        
-        // Ensure we have customer IDs for filtering if we didn't fetch them above
-        if customer_ids.is_empty() {
-            // Also include the SO ID itself as a potential parent, just in case
-            customer_ids.insert(service_org_id);
-            
-            if let Ok(cust_data) = client.get_customers_by_so(service_org_id).await {
-                for c in &cust_data {
-                    customer_ids.insert(c.customer_id);
-                }
-            }
-        } else {
-             customer_ids.insert(service_org_id);
-        }
-        
-        // We use get_sites_by_so which now hits /api/sites (all sites), so we MUST filter
+    if needs_hierarchy || options.sites {
+        emit_progress("Discovery", "Scanning Sites...", 10.0);
+        // Fetch ALL sites and filter (API limitation)
         match client.get_sites_by_so(service_org_id).await {
-            Ok(mut data) => {
-                let initial_count = data.len();
-                // Filter sites that belong to one of our customers (or the SO itself)
-                data.retain(|s| {
-                    let pid_match = s.parent_id.map_or(false, |pid| customer_ids.contains(&pid));
-                    let cid_match = s.customer_id.map_or(false, |cid| customer_ids.contains(&cid));
-                    let cid2_match = s.customerid.map_or(false, |cid| customer_ids.contains(&cid));
-                    let oid_match = s.org_unit_id.map_or(false, |oid| customer_ids.contains(&oid));
-                    let sid_match = s.service_org_id.map_or(false, |sid| customer_ids.contains(&sid));
-                    let sid2_match = s.service_orgid.map_or(false, |sid| customer_ids.contains(&sid));
-                    pid_match || cid_match || cid2_match || oid_match || sid_match || sid2_match
+            Ok(mut sites) => {
+                // Filter sites that belong to finding hierarchy
+                sites.retain(|s| {
+                    let pid_match = s.parent_id.map_or(false, |pid| {
+                        customer_ids.contains(&pid) || pid == service_org_id
+                    });
+                    let cid_match = s.customer_id.map_or(false, |cid| {
+                        customer_ids.contains(&cid) || cid == service_org_id
+                    });
+                    let oid_match = s.org_unit_id.map_or(false, |oid| {
+                        customer_ids.contains(&oid) || oid == service_org_id
+                    });
+
+                    // Specific check for SO direct child sites
+                    let sid_match = s.service_org_id.map_or(false, |sid| sid == service_org_id);
+
+                    pid_match || cid_match || oid_match || sid_match
                 });
-                
-                if initial_count > data.len() {
-                    tracing::info!("Filtered sites from {} to {} for SO {}", initial_count, data.len(), service_org_id);
-                }
-                
-                if initial_count > 0 && data.is_empty() {
-                    tracing::warn!("Site filtering resulted in 0 records. Reviewing parent/linkage IDs...");
-                    // Try to log the first few sites' ID fields to see why they didn't match
-                    // Since data.retain already filtered it, we'd need to fetch again or peek earlier.
-                    // Instead, I'll log the target customer_ids we are checking against.
-                    tracing::info!("Target IDs for SO {}: {:?}", service_org_id, customer_ids);
-                }
 
-                if export_csv {
-                    let path = output_path.join("sites.csv");
-                    match export_to_csv(&data, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export sites.csv: {}", e),
+                for s in &sites {
+                    // Site ID is typically the 'id' field, but let's check org_unit_id too
+                    if let Some(oid) = s.org_unit_id {
+                        valid_ou_ids.insert(oid);
                     }
+                    // Also just in case 'site_id' or main 'id'
+                    valid_ou_ids.insert(s.site_id);
                 }
-                if export_json {
-                    let path = output_path.join("sites.json");
-                    match export_to_json(&data, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export sites.json: {}", e),
-                    }
-                }
-                tracing::info!("Finished exporting Sites");
+                fetched_sites = sites;
             }
-            Err(e) => tracing::error!("Failed to export sites: {}", e),
+            Err(e) => tracing::error!("Failed to fetch sites: {}", e),
         }
     }
 
-    // Export Devices (under target SO)
-    if options.devices {
-        emit_progress("Devices", "Fetching...", 35.0);
-        
-        match client.get_devices_by_org_unit(service_org_id).await {
-            Ok(data) => {
-                if export_csv {
-                    let path = output_path.join("devices.csv");
-                    match export_to_csv(&data, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export devices.csv: {}", e),
-                    }
-                }
-                if export_json {
-                    let path = output_path.join("devices.json");
-                    match export_to_json(&data, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export devices.json: {}", e),
-                    }
-                }
+    tracing::info!(
+        "Hierarchy scan complete. Found {} valid Org Units.",
+        valid_ou_ids.len()
+    );
+
+    // --- EXECUTE EXPORTS ---
+
+    // Service Orgs
+    if options.service_orgs && !fetched_service_orgs.is_empty() {
+        if export_csv {
+            let path = output_path.join("service_orgs.csv");
+            if let Ok(c) = export_to_csv(&fetched_service_orgs, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
             }
-            Err(e) => tracing::error!("Failed to export devices: {}", e),
+        }
+        if export_json {
+            let path = output_path.join("service_orgs.json");
+            if let Ok(c) = export_to_json(&fetched_service_orgs, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
         }
     }
 
-    // Export Access Groups
-    if options.access_groups {
-        emit_progress("Access Groups", "Fetching...", 55.0);
-        
-        match client.get_access_groups(service_org_id).await {
-            Ok(data) => {
-                if export_csv {
-                    let path = output_path.join("access_groups.csv");
-                    if let Ok(count) = export_to_csv(&data, &path) {
-                        files_created.push(path.display().to_string());
-                        total_records += count;
-                    }
-                }
-                if export_json {
-                    let path = output_path.join("access_groups.json");
-                    if let Ok(count) = export_to_json(&data, &path) {
-                        files_created.push(path.display().to_string());
-                        total_records += count;
-                    }
-                }
+    // Customers
+    if options.customers && !fetched_customers.is_empty() {
+        if export_csv {
+            let path = output_path.join("customers.csv");
+            if let Ok(c) = export_to_csv(&fetched_customers, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
             }
-            Err(e) => tracing::error!("Failed to export access groups: {}", e),
+        }
+        if export_json {
+            let path = output_path.join("customers.json");
+            if let Ok(c) = export_to_json(&fetched_customers, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
         }
     }
 
-    // Export User Roles
-    if options.user_roles {
-        emit_progress("User Roles", "Fetching...", 65.0);
-        
-        match client.get_user_roles(service_org_id).await {
-            Ok(data) => {
-                if export_csv {
-                    let path = output_path.join("user_roles.csv");
-                    if let Ok(count) = export_to_csv(&data, &path) {
-                        files_created.push(path.display().to_string());
-                        total_records += count;
-                    }
-                }
-                if export_json {
-                    let path = output_path.join("user_roles.json");
-                    if let Ok(count) = export_to_json(&data, &path) {
-                        files_created.push(path.display().to_string());
-                        total_records += count;
-                    }
-                }
+    // Sites
+    if options.sites && !fetched_sites.is_empty() {
+        if export_csv {
+            let path = output_path.join("sites.csv");
+            if let Ok(c) = export_to_csv(&fetched_sites, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
             }
-            Err(e) => tracing::error!("Failed to export user roles: {}", e),
+        }
+        if export_json {
+            let path = output_path.join("sites.json");
+            if let Ok(c) = export_to_json(&fetched_sites, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
         }
     }
 
-    // Export Org Properties
-    if options.org_properties {
-        emit_progress("Organization Properties", "Fetching...", 75.0);
-        
-        match client.get_org_properties(service_org_id).await {
-            Ok(data) => {
-                if export_csv {
-                    let path = output_path.join("org_properties.csv");
-                    if let Ok(count) = export_to_csv(&data, &path) {
-                        files_created.push(path.display().to_string());
-                        total_records += count;
-                    }
-                }
-                if export_json {
-                    let path = output_path.join("org_properties.json");
-                    if let Ok(count) = export_to_json(&data, &path) {
-                        files_created.push(path.display().to_string());
-                        total_records += count;
-                    }
-                }
-            }
-            Err(e) => tracing::error!("Failed to export org properties: {}", e),
-        }
-    }
-
-    // Export Users
+    // Users (GLOBAL FETCH + FILTER)
     if options.users {
-        emit_progress("Users", "Fetching...", 45.0);
-        
-        match client.get_users_by_org_unit(service_org_id).await {
-            Ok(data) => {
+        emit_progress("Users", "Fetching system-wide users...", 20.0);
+        match client.get_users().await {
+            Ok(all_users) => {
+                let initial_count = all_users.len();
+                let filtered_users: Vec<_> = all_users
+                    .into_iter()
+                    .filter(|u| {
+                        // Check org_unit_id
+                        if let Some(oid) = u.org_unit_id {
+                            if valid_ou_ids.contains(&oid) {
+                                return true;
+                            }
+                        }
+                        // Check service_org_id (if strictly top level)
+                        if let Some(sid) = u.service_org_id {
+                            if valid_ou_ids.contains(&sid) {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                    .collect();
+
+                tracing::info!(
+                    "Users filter: {} -> {}",
+                    initial_count,
+                    filtered_users.len()
+                );
+
                 if export_csv {
                     let path = output_path.join("users.csv");
-                    match export_to_csv(&data, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export users.csv: {}", e),
+                    if let Ok(c) = export_to_csv(&filtered_users, &path) {
+                        files_created.push(path.display().to_string());
+                        total_records += c;
                     }
                 }
                 if export_json {
                     let path = output_path.join("users.json");
-                    match export_to_json(&data, &path) {
-                        Ok(count) => {
-                            files_created.push(path.display().to_string());
-                            total_records += count;
-                        }
-                        Err(e) => tracing::error!("Failed to export users.json: {}", e),
+                    if let Ok(c) = export_to_json(&filtered_users, &path) {
+                        files_created.push(path.display().to_string());
+                        total_records += c;
                     }
                 }
-                tracing::info!("Finished exporting Users");
             }
-            Err(e) => tracing::error!("Failed to export users: {}", e),
+            Err(e) => tracing::error!("Failed to fetch users: {}", e),
+        }
+    }
+
+    // Devices (GLOBAL FETCH + FILTER)
+    if options.devices {
+        emit_progress("Devices", "Fetching system-wide devices...", 40.0);
+        match client.get_devices().await {
+            Ok(all_devices) => {
+                let initial_count = all_devices.len();
+                let filtered_devices: Vec<_> = all_devices
+                    .into_iter()
+                    .filter(|d| {
+                        d.org_unit_id.map_or(false, |id| valid_ou_ids.contains(&id))
+                            || d.customer_id.map_or(false, |id| valid_ou_ids.contains(&id))
+                            || d.site_id.map_or(false, |id| valid_ou_ids.contains(&id))
+                            || d.so_id.map_or(false, |id| valid_ou_ids.contains(&id))
+                    })
+                    .collect();
+
+                tracing::info!(
+                    "Devices filter: {} -> {}",
+                    initial_count,
+                    filtered_devices.len()
+                );
+
+                if export_csv {
+                    let path = output_path.join("devices.csv");
+                    if let Ok(c) = export_to_csv(&filtered_devices, &path) {
+                        files_created.push(path.display().to_string());
+                        total_records += c;
+                    }
+                }
+                if export_json {
+                    let path = output_path.join("devices.json");
+                    if let Ok(c) = export_to_json(&filtered_devices, &path) {
+                        files_created.push(path.display().to_string());
+                        total_records += c;
+                    }
+                }
+            }
+            Err(e) => tracing::error!("Failed to fetch devices: {}", e),
+        }
+    }
+
+    // --- ITERATIVE EXPORTS ---
+    // For Access Groups, User Roles, Org Properties, we iterate valid OUs
+
+    // Convert HashSet to Vec for iteration and sorting (deterministic order)
+    let mut ou_list: Vec<i64> = valid_ou_ids.iter().cloned().collect();
+    ou_list.sort();
+
+    // Access Groups
+    if options.access_groups {
+        emit_progress("Access Groups", "Iterating Org Units...", 60.0);
+        let mut all_data = Vec::new();
+        for (idx, ou_id) in ou_list.iter().enumerate() {
+            if idx % 10 == 0 {
+                emit_progress(
+                    "Access Groups",
+                    &format!("Fetching {}/{}", idx, ou_list.len()),
+                    60.0 + (idx as f32 / ou_list.len() as f32) * 5.0,
+                );
+            }
+            if let Ok(items) = client.get_access_groups(*ou_id).await {
+                all_data.extend(items);
+            }
+        }
+        if export_csv {
+            let path = output_path.join("access_groups.csv");
+            if let Ok(c) = export_to_csv(&all_data, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
+        }
+        if export_json {
+            let path = output_path.join("access_groups.json");
+            if let Ok(c) = export_to_json(&all_data, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
+        }
+    }
+
+    // User Roles
+    if options.user_roles {
+        emit_progress("User Roles", "Iterating Org Units...", 70.0);
+        let mut all_data = Vec::new();
+        for (idx, ou_id) in ou_list.iter().enumerate() {
+            if idx % 10 == 0 {
+                emit_progress(
+                    "User Roles",
+                    &format!("Fetching {}/{}", idx, ou_list.len()),
+                    70.0 + (idx as f32 / ou_list.len() as f32) * 5.0,
+                );
+            }
+            if let Ok(items) = client.get_user_roles(*ou_id).await {
+                all_data.extend(items);
+            }
+        }
+        if export_csv {
+            let path = output_path.join("user_roles.csv");
+            if let Ok(c) = export_to_csv(&all_data, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
+        }
+        if export_json {
+            let path = output_path.join("user_roles.json");
+            if let Ok(c) = export_to_json(&all_data, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
+        }
+    }
+
+    // Org Properties
+    if options.org_properties {
+        emit_progress("Org Properties", "Iterating Org Units...", 80.0);
+        let mut all_data = Vec::new();
+        for (idx, ou_id) in ou_list.iter().enumerate() {
+            if idx % 10 == 0 {
+                emit_progress(
+                    "Org Properties",
+                    &format!("Fetching {}/{}", idx, ou_list.len()),
+                    80.0 + (idx as f32 / ou_list.len() as f32) * 5.0,
+                );
+            }
+            if let Ok(items) = client.get_org_properties(*ou_id).await {
+                all_data.extend(items);
+            }
+        }
+        if export_csv {
+            let path = output_path.join("org_properties.csv");
+            if let Ok(c) = export_to_csv(&all_data, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
+        }
+        if export_json {
+            let path = output_path.join("org_properties.json");
+            if let Ok(c) = export_to_json(&all_data, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
         }
     }
 
@@ -353,7 +405,11 @@ pub async fn start_export(
 
     Ok(ExportResult {
         success: true,
-        message: format!("Exported {} records to {} files", total_records, files_created.len()),
+        message: format!(
+            "Exported {} records to {} files (deep scan enabled)",
+            total_records,
+            files_created.len()
+        ),
         files_created,
         total_records,
     })

@@ -1,10 +1,10 @@
 //! CLI command runner
 
-use std::io::{self, Write, BufRead};
 use crate::api::NcClient;
 use crate::config::{Profile, Settings};
 use crate::credentials::CredentialStore;
 use crate::export::{export_to_csv, export_to_json};
+use std::io::{self, BufRead, Write};
 
 use super::{Cli, Commands, ExportArgs, ProfileCommands, TestArgs};
 
@@ -31,23 +31,23 @@ async fn run_export(
 ) -> anyhow::Result<()> {
     // Resolve server and JWT
     let (base_url, jwt) = resolve_connection(server, profile_name, args.jwt.as_deref()).await?;
-    
+
     println!("Connecting to {}...", base_url);
-    
+
     let client = NcClient::new(&base_url);
     client.authenticate(&jwt).await?;
-    
+
     println!("✓ Connected successfully");
-    
+
     // Create output directory
     std::fs::create_dir_all(&args.output)?;
-    
+
     let export_csv = args.format.iter().any(|f| f == "csv");
     let export_json = args.format.iter().any(|f| f == "json");
-    
+
     let mut total_records = 0;
     let so_id = args.service_org;
-    
+
     // Export Service Orgs
     if args.should_export("service_orgs") {
         print!("Exporting service organizations... ");
@@ -188,8 +188,12 @@ async fn run_export(
         }
     }
 
-    println!("\n✓ Export complete: {} total records to {}", total_records, args.output.display());
-    
+    println!(
+        "\n✓ Export complete: {} total records to {}",
+        total_records,
+        args.output.display()
+    );
+
     Ok(())
 }
 
@@ -205,28 +209,39 @@ async fn run_profile(cmd: ProfileCommands) -> anyhow::Result<()> {
                 for profile in &settings.profiles {
                     let active = settings.active_profile.as_ref() == Some(&profile.name);
                     let marker = if active { "*" } else { " " };
-                    let creds = if CredentialStore::has_jwt(&profile.name) { "✓" } else { " " };
-                    println!("  {} {} {} ({})", marker, creds, profile.name, profile.fqdn);
+                    let creds = if CredentialStore::has_jwt(&profile.name) {
+                        "✓"
+                    } else {
+                        " "
+                    };
+                    println!(
+                        "  {} {} {} ({})",
+                        marker, creds, profile.name, profile.source.fqdn
+                    );
                 }
                 println!("\n* = active profile");
                 println!("✓ = credentials stored");
             }
         }
-        
-        ProfileCommands::Add { name, server, service_org } => {
+
+        ProfileCommands::Add {
+            name,
+            server,
+            service_org,
+        } => {
             let mut settings = Settings::load()?;
-            let mut profile = Profile::new(&name, &server);
-            profile.service_org_id = service_org;
+            let mut profile = Profile::new_export(&name, &server);
+            profile.source.service_org_id = service_org;
             settings.add_profile(profile);
-            
+
             if settings.active_profile.is_none() {
                 settings.active_profile = Some(name.clone());
             }
-            
+
             settings.save()?;
             println!("✓ Profile '{}' saved", name);
         }
-        
+
         ProfileCommands::Delete { name } => {
             let mut settings = Settings::load()?;
             settings.delete_profile(&name);
@@ -234,29 +249,29 @@ async fn run_profile(cmd: ProfileCommands) -> anyhow::Result<()> {
             settings.save()?;
             println!("✓ Profile '{}' deleted", name);
         }
-        
+
         ProfileCommands::Use { name } => {
             let mut settings = Settings::load()?;
             settings.set_active_profile(&name)?;
             settings.save()?;
             println!("✓ Active profile set to '{}'", name);
         }
-        
+
         ProfileCommands::SetCredentials { name } => {
             println!("Enter JWT token for profile '{}': ", name);
             let mut jwt = String::new();
             io::stdin().lock().read_line(&mut jwt)?;
             let jwt = jwt.trim();
-            
+
             if jwt.is_empty() {
                 anyhow::bail!("JWT cannot be empty");
             }
-            
+
             CredentialStore::store_jwt(&name, jwt)?;
             println!("✓ Credentials stored for profile '{}'", name);
         }
     }
-    
+
     Ok(())
 }
 
@@ -267,15 +282,15 @@ async fn run_test(
     args: TestArgs,
 ) -> anyhow::Result<()> {
     let (base_url, jwt) = resolve_connection(server, profile_name, args.jwt.as_deref()).await?;
-    
+
     println!("Testing connection to {}...", base_url);
-    
+
     let client = NcClient::new(&base_url);
-    
+
     match client.authenticate(&jwt).await {
         Ok(()) => {
             println!("✓ Authentication successful");
-            
+
             match client.get_server_info().await {
                 Ok(info) => {
                     if let Some(version) = info.version {
@@ -289,7 +304,7 @@ async fn run_test(
             println!("✗ Authentication failed: {}", e);
         }
     }
-    
+
     Ok(())
 }
 
@@ -303,27 +318,40 @@ async fn resolve_connection(
     if let Some(server) = server {
         let jwt = match jwt {
             Some(j) => j.to_string(),
-            None => anyhow::bail!("JWT required when using --server. Use --jwt or set NC_JWT env var"),
+            None => {
+                anyhow::bail!("JWT required when using --server. Use --jwt or set NC_JWT env var")
+            }
         };
         return Ok((format!("https://{}", server), jwt));
     }
-    
+
     // Otherwise, try to load from profile
     let settings = Settings::load()?;
-    
+
     let profile_name = profile_name
         .or(settings.active_profile.clone())
-        .ok_or_else(|| anyhow::anyhow!("No profile specified and no active profile set. Use --server or --profile"))?;
-    
-    let profile = settings.profiles.iter()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No profile specified and no active profile set. Use --server or --profile"
+            )
+        })?;
+
+    let profile = settings
+        .profiles
+        .iter()
         .find(|p| p.name == profile_name)
         .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
-    
+
     let jwt = match jwt {
         Some(j) => j.to_string(),
-        None => CredentialStore::get_jwt(&profile_name)?
-            .ok_or_else(|| anyhow::anyhow!("No credentials stored for profile '{}'. Use: nc-export profile set-credentials {}", profile_name, profile_name))?,
+        None => CredentialStore::get_jwt(&profile_name)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "No credentials stored for profile '{}'. Use: nc-export profile set-credentials {}",
+                profile_name,
+                profile_name
+            )
+        })?,
     };
-    
+
     Ok((profile.base_url(), jwt))
 }
