@@ -66,7 +66,7 @@ function App() {
   const [destFqdn, setDestFqdn] = useState('');
   const [destJwt, setDestJwt] = useState('');
   const [destApiUsername, setDestApiUsername] = useState('');
-  const [destApiPassword, setDestApiPassword] = useState('');
+
   const [destServiceOrgId, setDestServiceOrgId] = useState('');
 
   // App version
@@ -158,8 +158,11 @@ function App() {
                 const storedDestJwt = await api.getCredentials(`${active.name}_dest`);
                 if (storedDestJwt) {
                   setDestJwt(storedDestJwt);
-                  const storedDestPwd = await api.getPassword(`${active.name}_dest`);
-                  if (storedDestPwd) setDestApiPassword(storedDestPwd);
+                  // storedDestPwd retrieved but unused - explicit ignore or removal?
+                  // Since I'm fixing lints, I should just NOT assign it to a variable or use void
+                  // Better: don't call it if not needed? But we check if it exists?
+                  // Actually code was: if (storedDestJwt) { ... getPassword ... }
+                  // If we don't need password, just don't get it.
 
                   addLog('info', `Connecting to stored destination: ${active.destination.fqdn}...`);
                   const destRes = await api.connectDestination(active.destination.fqdn, storedDestJwt, active.destination.username);
@@ -414,18 +417,15 @@ function App() {
         const storedDestJwt = await api.getCredentials(`${profile.name}_dest`);
         if (storedDestJwt) {
           setDestJwt(storedDestJwt);
-          const storedDestPwd = await api.getPassword(`${profile.name}_dest`);
-          setDestApiPassword(storedDestPwd || '');
+          // Password unused in UI state
           setDestApiUsername(profile.destination?.username || '');
         } else {
           setDestJwt('');
           setDestApiUsername('');
-          setDestApiPassword('');
         }
       } catch (e) {
         setDestJwt('');
         setDestApiUsername('');
-        setDestApiPassword('');
       }
     }
 
