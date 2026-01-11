@@ -307,11 +307,6 @@ impl NcClient {
         self.get_all_pages(paths::DEVICES, 100, |_, _| {}).await
     }
 
-    /// Get all users system-wide
-    pub async fn get_users(&self) -> ApiResult<Vec<User>> {
-        self.get_all_pages(paths::USERS, 100, |_, _| {}).await
-    }
-
     /// Get users for an org unit
     pub async fn get_users_by_org_unit(&self, org_unit_id: i64) -> ApiResult<Vec<User>> {
         let path = endpoints::org_unit_users(org_unit_id);

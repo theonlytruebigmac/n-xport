@@ -207,53 +207,49 @@ pub async fn start_export(
         }
     }
 
-    // Users (GLOBAL FETCH + FILTER)
+    // Users (ITERATIVE FETCH)
     if options.users {
-        emit_progress("Users", "Fetching system-wide users...", 20.0);
-        match client.get_users().await {
-            Ok(all_users) => {
-                let initial_count = all_users.len();
-                let filtered_users: Vec<_> = all_users
-                    .into_iter()
-                    .filter(|u| {
-                        // Check org_unit_id
-                        if let Some(oid) = u.org_unit_id {
-                            if valid_ou_ids.contains(&oid) {
-                                return true;
-                            }
-                        }
-                        // Check service_org_id (if strictly top level)
-                        if let Some(sid) = u.service_org_id {
-                            if valid_ou_ids.contains(&sid) {
-                                return true;
-                            }
-                        }
-                        false
-                    })
-                    .collect();
+        emit_progress("Users", "Iterating Org Units...", 20.0);
+        let mut all_users = Vec::new();
+        // Since we iterate valid OUs, we don't need extra filtering locally,
+        // passing each ID to the API guarantees scope.
+        // Convert valid_ou_ids to sorted Vec if not already created (it is used later but we need it now)
+        let mut ou_list_users: Vec<i64> = valid_ou_ids.iter().cloned().collect();
+        ou_list_users.sort();
 
-                tracing::info!(
-                    "Users filter: {} -> {}",
-                    initial_count,
-                    filtered_users.len()
+        for (idx, ou_id) in ou_list_users.iter().enumerate() {
+            if idx % 10 == 0 {
+                emit_progress(
+                    "Users",
+                    &format!("Fetching {}/{}", idx, ou_list_users.len()),
+                    20.0 + (idx as f32 / ou_list_users.len() as f32) * 5.0,
                 );
-
-                if export_csv {
-                    let path = output_path.join("users.csv");
-                    if let Ok(c) = export_to_csv(&filtered_users, &path) {
-                        files_created.push(path.display().to_string());
-                        total_records += c;
-                    }
-                }
-                if export_json {
-                    let path = output_path.join("users.json");
-                    if let Ok(c) = export_to_json(&filtered_users, &path) {
-                        files_created.push(path.display().to_string());
-                        total_records += c;
-                    }
-                }
             }
-            Err(e) => tracing::error!("Failed to fetch users: {}", e),
+            match client.get_users_by_org_unit(*ou_id).await {
+                Ok(users) => all_users.extend(users),
+                Err(e) => tracing::warn!("Failed to fetch users for OU {}: {}", ou_id, e),
+            }
+        }
+
+        // Remove duplicates just in case same user returned multiple times (though unlikely by OU)
+        // Need to sort or strict uniqueness? Users have IDs.
+        // For simple export, let's keep all. Or maybe dedup by UserID if we wanted perfection.
+
+        tracing::info!("Fetched {} users total.", all_users.len());
+
+        if export_csv {
+            let path = output_path.join("users.csv");
+            if let Ok(c) = export_to_csv(&all_users, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
+        }
+        if export_json {
+            let path = output_path.join("users.json");
+            if let Ok(c) = export_to_json(&all_users, &path) {
+                files_created.push(path.display().to_string());
+                total_records += c;
+            }
         }
     }
 
