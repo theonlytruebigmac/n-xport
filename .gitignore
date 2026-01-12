@@ -53,3 +53,6 @@ Desktop.ini
 *.tmp
 *.temp
 .cache/
+
+# Sensitive Data Export
+nc_export/
