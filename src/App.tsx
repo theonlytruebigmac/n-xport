@@ -55,7 +55,7 @@ function App() {
   }, [logs]);
 
   // Workflow state
-  const [currentStep, setCurrentStep] = useState<'setup' | 'configure' | 'exporting' | 'complete'>('setup');
+  const [currentStep, setCurrentStep] = useState<'home' | 'setup' | 'configure' | 'exporting' | 'complete'>('home');
   const [appMode, setAppMode] = useState<'export' | 'migrate'>('export');
 
   // Destination state (for migration)
@@ -95,7 +95,7 @@ function App() {
           setServiceOrgId(active.source.serviceOrgId.toString());
         }
 
-        // Also load credentials for the active profile
+        // Load credentials for the active profile (but don't auto-connect)
         try {
           const storedJwt = await api.getCredentials(active.name);
           if (storedJwt) setJwt(storedJwt);
@@ -106,92 +106,26 @@ function App() {
           // Ignore error loading creds
         }
 
-        // Try to connect automagically
-        const has = await api.hasCredentials(active.name);
-        if (has) {
-          setConnectionStatus('connecting');
-          addLog('info', `Connecting with saved credentials for ${active.name}...`);
-          const result = await api.connectWithProfile(active.name, active.source.fqdn, active.source.username);
-          if (result.success) {
-            setConnectionStatus('connected');
-            setServerVersion(result.serverVersion || '');
-            setServerUrl(result.serverUrl || active.source.fqdn);
-            // Resolve Service Org
-            let finalSoId = result.serviceOrgId;
-            let finalSoName = result.serviceOrgName;
-
-            // Check if profile has a specific SO ID
-            if (active.source.serviceOrgId) {
-              finalSoId = active.source.serviceOrgId;
-              if (finalSoId !== result.serviceOrgId) {
-                try {
-                  const info = await api.getServiceOrgInfo(finalSoId);
-                  finalSoName = info.name;
-                } catch (e) {
-                  finalSoName = `Unknown (ID: ${finalSoId})`;
-                }
-              }
-            } else if (result.serviceOrgId) {
-              // Profile has no ID, but API returned one - auto-fill form
-              setServiceOrgId(result.serviceOrgId.toString());
-            }
-
-            if (finalSoId && finalSoName) {
-              setConnectedServiceOrg({ id: finalSoId, name: finalSoName });
-              addLog('info', `Target Service Org: ${finalSoName} (ID: ${finalSoId})`);
-            }
-
-            addLog('success', `Connected to ${result.serverUrl || active.source.fqdn}`);
-            if (result.serverVersion) addLog('info', `Server version: ${result.serverVersion}`);
-
-            // Handle Destination if present (migration profile)
-            if (active.type === 'migration' && active.destination) {
-              setAppMode('migrate');
-              setDestFqdn(active.destination.fqdn);
-              if (active.destination.serviceOrgId) {
-                setDestServiceOrgId(active.destination.serviceOrgId.toString());
-              }
-
-              // Load dest creds
-              try {
-                setDestApiUsername(active.destination.username || '');
-                const storedDestJwt = await api.getCredentials(`${active.name}_dest`);
-                if (storedDestJwt) {
-                  setDestJwt(storedDestJwt);
-                  // storedDestPwd retrieved but unused - explicit ignore or removal?
-                  // Since I'm fixing lints, I should just NOT assign it to a variable or use void
-                  // Better: don't call it if not needed? But we check if it exists?
-                  // Actually code was: if (storedDestJwt) { ... getPassword ... }
-                  // If we don't need password, just don't get it.
-
-                  addLog('info', `Connecting to stored destination: ${active.destination.fqdn}...`);
-                  const destRes = await api.connectDestination(active.destination.fqdn, storedDestJwt, active.destination.username);
-                  if (destRes.success) {
-                    setDestConnectionStatus('connected');
-                    setDestServerVersion(destRes.serverVersion || '');
-                    setDestServerUrl(destRes.serverUrl || active.destination.fqdn);
-                    if (destRes.serviceOrgId) {
-                      setDestConnectedServiceOrg({
-                        id: destRes.serviceOrgId,
-                        name: destRes.serviceOrgName || 'Unknown'
-                      });
-                    }
-                    addLog('success', `Connected to destination: ${active.destination.fqdn}`);
-                  }
-                }
-              } catch (e) {
-                // ignore
-              }
-            }
-
-            setCurrentStep('configure');
-          } else {
-            setConnectionStatus('disconnected');
-            addLog('warning', 'Saved credentials expired or invalid. Please enter JWT token.');
+        // Handle Destination if present (migration profile) - load data only
+        if (active.type === 'migration' && active.destination) {
+          setAppMode('migrate');
+          setDestFqdn(active.destination.fqdn);
+          if (active.destination.serviceOrgId) {
+            setDestServiceOrgId(active.destination.serviceOrgId.toString());
           }
-        } else {
-          addLog('info', `Selected profile "${active.name}". Please enter JWT token to connect.`);
+          setDestApiUsername(active.destination.username || '');
+
+          // Load dest JWT if available
+          try {
+            const storedDestJwt = await api.getCredentials(`${active.name}_dest`);
+            if (storedDestJwt) setDestJwt(storedDestJwt);
+          } catch (e) {
+            // ignore
+          }
         }
+
+        // Don't auto-connect - user will connect manually from setup page
+        addLog('info', `Profile "${active.name}" loaded. Click Export or Migrate to continue.`);
       }
     } catch (e) {
       addLog('error', `Failed to load profiles: ${e}`);
@@ -296,10 +230,8 @@ function App() {
           addLog('info', 'Credentials saved to keychain');
         }
 
-        // Switch to configure step only in export mode
-        if (appMode === 'export') {
-          setCurrentStep('configure');
-        }
+        // User clicked Connect manually, so stay on current step
+        // setCurrentStep('configure'); // Removed: don't auto-navigate
       } else {
         setConnectionStatus('error');
         addLog('error', result.message);
@@ -469,7 +401,8 @@ function App() {
 
           addLog('success', `Connected to ${result.serverUrl || profile.source.fqdn}`);
           if (result.serverVersion) addLog('info', `Server version: ${result.serverVersion}`);
-          setCurrentStep('configure');
+          // Stay on current step - user navigates manually
+          // setCurrentStep('configure'); // Removed: don't auto-navigate
         } else {
           setConnectionStatus('disconnected');
           addLog('warning', 'Saved credentials expired or invalid. Please enter JWT token.');
@@ -621,116 +554,271 @@ function App() {
 
   return (
     <div className="app">
-      {/* Header */}
-      <header className="header">
-        <div className="header-title">
-          <h1><span className="header-accent">N-xport</span> Data Tool</h1>
-          <span className="badge" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>v{appVersion}</span>
-        </div>
-        <div className="header-actions">
-          <div className="header-status">
-            {appMode === 'migrate' ? (
-              <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-                  <span className="badge badge-info">Source</span>
+      {/* Header - only show when not on home page */}
+      {currentStep !== 'home' && (
+        <header className="header">
+          <div className="header-title">
+            <h1><span className="header-accent">N-xport</span> Data Tool</h1>
+            <span className="badge" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>v{appVersion}</span>
+          </div>
+          <div className="header-actions">
+            <div className="header-status">
+              {appMode === 'migrate' ? (
+                <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
+                    <span className="badge badge-info">Source</span>
+                    <div className={`status-indicator ${connectionStatus === 'connected' ? 'connected' : ''}`} />
+                    <span className="form-label" style={{ marginBottom: 0, fontSize: '0.75rem' }}>
+                      {serverUrl || (connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected')}
+                      {serverVersion && ` (v${serverVersion})`}
+                    </span>
+                  </div>
+                  <div style={{ height: '16px', width: '1px', background: 'var(--color-border)' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
+                    <span className="badge badge-info">Dest</span>
+                    <div className={`status-indicator ${destConnectionStatus === 'connected' ? 'connected' : ''}`} />
+                    <span className="form-label" style={{ marginBottom: 0, fontSize: '0.75rem' }}>
+                      {destServerUrl || (destConnectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected')}
+                      {destServerVersion && ` (v${destServerVersion})`}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <>
                   <div className={`status-indicator ${connectionStatus === 'connected' ? 'connected' : ''}`} />
-                  <span className="form-label" style={{ marginBottom: 0, fontSize: '0.75rem' }}>
-                    {serverUrl || (connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected')}
-                    {serverVersion && ` (v${serverVersion})`}
+                  <span className="form-label" style={{ marginBottom: 0, fontSize: '0.8125rem' }}>
+                    {connectionStatus === 'connected'
+                      ? `${serverUrl || 'Connected'} ${connectedServiceOrg ? `· ${connectedServiceOrg.name}` : ''}`
+                      : connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
                   </span>
-                </div>
-                <div style={{ height: '16px', width: '1px', background: 'var(--color-border)' }} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-                  <span className="badge badge-info">Dest</span>
-                  <div className={`status-indicator ${destConnectionStatus === 'connected' ? 'connected' : ''}`} />
-                  <span className="form-label" style={{ marginBottom: 0, fontSize: '0.75rem' }}>
-                    {destServerUrl || (destConnectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected')}
-                    {destServerVersion && ` (v${destServerVersion})`}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className={`status-indicator ${connectionStatus === 'connected' ? 'connected' : ''}`} />
-                <span className="form-label" style={{ marginBottom: 0, fontSize: '0.8125rem' }}>
-                  {connectionStatus === 'connected'
-                    ? `${serverUrl || 'Connected'} ${connectedServiceOrg ? `· ${connectedServiceOrg.name}` : ''}`
-                    : connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
-                </span>
-                {serverVersion && (
-                  <span className="badge badge-info" style={{ marginLeft: 'var(--space-sm)' }}>
-                    v{serverVersion}
-                  </span>
-                )}
-              </>
+                  {serverVersion && (
+                    <span className="badge badge-info" style={{ marginLeft: 'var(--space-sm)' }}>
+                      v{serverVersion}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
+            {currentStep !== 'exporting' && currentStep !== 'complete' && (
+              <button
+                className="btn btn-primary"
+                style={{ fontWeight: 700, minWidth: '120px' }}
+                onClick={() => {
+                  if (currentStep === 'setup') setCurrentStep('configure');
+                  else if (currentStep === 'configure') {
+                    if (appMode === 'migrate') handleMigrate();
+                    else handleExport();
+                  }
+                }}
+                disabled={
+                  currentStep === 'setup'
+                    ? (appMode === 'migrate' ? (connectionStatus !== 'connected' || destConnectionStatus !== 'connected') : connectionStatus !== 'connected')
+                    : (appMode === 'migrate' ? (!serviceOrgId || !destConnectedServiceOrg) : (!serviceOrgId || !outputDir))
+                }
+              >
+                {currentStep === 'setup' ? 'Next: Configure' : (appMode === 'migrate' ? 'Start Migration' : 'Start Export')}
+              </button>
             )}
           </div>
-
-          {currentStep !== 'exporting' && currentStep !== 'complete' && (
-            <button
-              className="btn btn-primary"
-              style={{ fontWeight: 700, minWidth: '120px' }}
-              onClick={() => {
-                if (currentStep === 'setup') setCurrentStep('configure');
-                else if (currentStep === 'configure') {
-                  if (appMode === 'migrate') handleMigrate();
-                  else handleExport();
-                }
-              }}
-              disabled={
-                currentStep === 'setup'
-                  ? (appMode === 'migrate' ? (connectionStatus !== 'connected' || destConnectionStatus !== 'connected') : connectionStatus !== 'connected')
-                  : (appMode === 'migrate' ? (!serviceOrgId || !destConnectedServiceOrg) : (!serviceOrgId || !outputDir))
-              }
-            >
-              {currentStep === 'setup' ? 'Next: Configure' : (appMode === 'migrate' ? 'Start Migration' : 'Start Export')}
-            </button>
-          )}
-        </div>
-      </header>
+        </header>
+      )}
 
       <div className="main-content workflow-container">
         <main className="content-area centered-dashboard">
           {/* Update Banner */}
           <UpdateBanner />
 
-          {/* Workflow Indicator */}
-          <div className="step-indicator">
-            <div className={`step-item ${currentStep === 'setup' ? 'active' : 'completed'}`}>
-              <div className="step-number">1</div>
-              <div className="step-label">Setup</div>
+          {/* Home Page - Mode Selection */}
+          {currentStep === 'home' && (
+            <div className="centered-dashboard fade-in" style={{
+              maxWidth: 750,
+              margin: '0 auto',
+              paddingTop: 'var(--space-lg)',
+              display: 'flex',
+              flexDirection: 'column',
+              height: 'calc(100vh - 120px)'
+            }}>
+              <div style={{ textAlign: 'center', marginBottom: 'var(--space-xl)' }}>
+                <h1 style={{
+                  fontSize: '2rem',
+                  fontWeight: 600,
+                  marginBottom: 'var(--space-xs)',
+                  color: 'var(--color-text)'
+                }}>
+                  <span style={{ color: 'var(--color-accent)' }}>N-xport</span> Data Tool
+                </h1>
+                <p style={{
+                  color: 'var(--color-text-muted)',
+                  fontSize: '0.9375rem'
+                }}>
+                  Export or migrate data between N-Central servers
+                </p>
+              </div>
+
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: 'var(--space-lg)',
+                flex: 1,
+                minHeight: 280
+              }}>
+                {/* Export Card */}
+                <div
+                  className="card"
+                  onClick={() => {
+                    setAppMode('export');
+                    setCurrentStep('setup');
+                  }}
+                  style={{
+                    cursor: 'pointer',
+                    padding: 0,
+                    overflow: 'hidden',
+                    transition: 'all 0.2s ease',
+                    border: '1px solid var(--color-border)',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-accent)';
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-border)';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }}
+                >
+                  <div style={{ height: 4, background: 'var(--color-accent)' }} />
+                  <div style={{
+                    padding: 'var(--space-xl)',
+                    flex: 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    textAlign: 'center'
+                  }}>
+                    <h2 style={{
+                      fontSize: '1.5rem',
+                      fontWeight: 600,
+                      marginBottom: 'var(--space-sm)',
+                      color: 'var(--color-text)'
+                    }}>Export Data</h2>
+                    <p style={{
+                      color: 'var(--color-text-muted)',
+                      fontSize: '0.875rem',
+                      lineHeight: 1.5,
+                      maxWidth: 220
+                    }}>
+                      Export customers, sites, users, and devices to CSV or JSON
+                    </p>
+                  </div>
+                </div>
+
+                {/* Migration Card */}
+                <div
+                  className="card"
+                  onClick={() => {
+                    setAppMode('migrate');
+                    setCurrentStep('setup');
+                  }}
+                  style={{
+                    cursor: 'pointer',
+                    padding: 0,
+                    overflow: 'hidden',
+                    transition: 'all 0.2s ease',
+                    border: '1px solid var(--color-border)',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-success)';
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-border)';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }}
+                >
+                  <div style={{ height: 4, background: 'var(--color-success)' }} />
+                  <div style={{
+                    padding: 'var(--space-xl)',
+                    flex: 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    textAlign: 'center'
+                  }}>
+                    <h2 style={{
+                      fontSize: '1.5rem',
+                      fontWeight: 600,
+                      marginBottom: 'var(--space-sm)',
+                      color: 'var(--color-text)'
+                    }}>Migrate Data</h2>
+                    <p style={{
+                      color: 'var(--color-text-muted)',
+                      fontSize: '0.875rem',
+                      lineHeight: 1.5,
+                      maxWidth: 220
+                    }}>
+                      Transfer customers, users, roles, and properties between servers
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{
+                textAlign: 'center',
+                marginTop: 'var(--space-lg)',
+                color: 'var(--color-text-muted)',
+                fontSize: '0.75rem',
+                opacity: 0.5
+              }}>
+                v{appVersion}
+              </div>
             </div>
-            <div className={`step-line ${['configure', 'exporting', 'complete'].includes(currentStep) ? 'active' : ''}`} />
-            <div className={`step-item ${currentStep === 'configure' ? 'active' : ['exporting', 'complete'].includes(currentStep) ? 'completed' : ''}`}>
-              <div className="step-number">2</div>
-              <div className="step-label">Configure</div>
+          )}
+
+          {/* Workflow Indicator - Only show for non-home steps */}
+          {currentStep !== 'home' && (
+            <div className="step-indicator">
+              <div className={`step-item ${currentStep === 'setup' ? 'active' : 'completed'}`}>
+                <div className="step-number">1</div>
+                <div className="step-label">Setup</div>
+              </div>
+              <div className={`step-line ${['configure', 'exporting', 'complete'].includes(currentStep) ? 'active' : ''}`} />
+              <div className={`step-item ${currentStep === 'configure' ? 'active' : ['exporting', 'complete'].includes(currentStep) ? 'completed' : ''}`}>
+                <div className="step-number">2</div>
+                <div className="step-label">Configure</div>
+              </div>
+              <div className={`step-line ${['exporting', 'complete'].includes(currentStep) ? 'active' : ''}`} />
+              <div className={`step-item ${['exporting', 'complete'].includes(currentStep) ? 'active' : ''}`}>
+                <div className="step-number">3</div>
+                <div className="step-label">Export</div>
+              </div>
             </div>
-            <div className={`step-line ${['exporting', 'complete'].includes(currentStep) ? 'active' : ''}`} />
-            <div className={`step-item ${['exporting', 'complete'].includes(currentStep) ? 'active' : ''}`}>
-              <div className="step-number">3</div>
-              <div className="step-label">Export</div>
-            </div>
-          </div>
+          )}
 
           {currentStep === 'setup' && (
             <div className="centered-dashboard fade-in">
-              {/* Mode Switcher */}
+              {/* Back to Home / Mode Indicator */}
               <div className="card" style={{ padding: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
-                <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <button
-                    className={`btn ${appMode === 'export' ? 'btn-primary' : 'btn-ghost'}`}
-                    style={{ flex: 1 }}
-                    onClick={() => setAppMode('export')}
+                    className="btn btn-ghost"
+                    onClick={() => setCurrentStep('home')}
+                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}
                   >
-                    Export Mode
+                    ← Back
                   </button>
-                  <button
-                    className={`btn ${appMode === 'migrate' ? 'btn-primary' : 'btn-ghost'}`}
-                    style={{ flex: 1 }}
-                    onClick={() => setAppMode('migrate')}
-                  >
-                    Migration Mode
-                  </button>
+                  <span style={{
+                    color: 'var(--color-text)',
+                    fontWeight: 600
+                  }}>
+                    {appMode === 'export' ? 'Export Mode' : 'Migration Mode'}
+                  </span>
+                  <div style={{ width: 80 }} /> {/* Spacer for centering */}
                 </div>
               </div>
 
@@ -748,7 +836,7 @@ function App() {
                         onClick={() => handleSelectProfile(profile)}
                       >
                         <div className="profile-info">
-                          <span className="profile-name">{profile.name}{profile.type === 'migration' ? ' 🔄' : ''}</span>
+                          <span className="profile-name">{profile.name}</span>
                           <span className="profile-fqdn">{profile.source.fqdn}</span>
                         </div>
                         <button

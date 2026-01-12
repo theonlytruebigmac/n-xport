@@ -15,9 +15,11 @@ export function useUpdateChecker() {
     const [checking, setChecking] = useState(false);
     const [downloading, setDownloading] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [error, setError] = useState<string | null>(null);
 
     const checkForUpdate = async () => {
         setChecking(true);
+        setError(null);
         try {
             const update = await check();
 
@@ -34,8 +36,9 @@ export function useUpdateChecker() {
                     currentVersion: 'unknown'
                 });
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error('Failed to check for updates:', e);
+            setError(e.message || String(e));
         } finally {
             setChecking(false);
         }
@@ -61,8 +64,9 @@ export function useUpdateChecker() {
                 // Relaunch the app after update
                 await relaunch();
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error('Failed to install update:', e);
+            setError(e.message || String(e));
         } finally {
             setDownloading(false);
         }
@@ -82,6 +86,7 @@ export function useUpdateChecker() {
         checking,
         downloading,
         progress,
+        error,
         checkForUpdate,
         downloadAndInstall
     };
@@ -89,10 +94,45 @@ export function useUpdateChecker() {
 
 // Simple update notification banner component
 export function UpdateBanner() {
-    const { updateInfo, checking, downloading, downloadAndInstall } = useUpdateChecker();
+    const { updateInfo, checking, downloading, error, downloadAndInstall } = useUpdateChecker();
 
     if (checking) {
-        return null; // Don't show anything while checking
+        return (
+            <div style={{
+                background: 'var(--color-bg-secondary)',
+                borderRadius: 'var(--radius-md)',
+                padding: 'var(--space-sm) var(--space-md)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 'var(--space-md)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-muted)',
+                fontSize: '0.875rem'
+            }}>
+                <span className="loading-spinner small" style={{ marginRight: 'var(--space-sm)' }}></span>
+                Checking for updates...
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div style={{
+                background: 'var(--color-error-bg)',
+                borderRadius: 'var(--radius-md)',
+                padding: 'var(--space-sm) var(--space-md)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 'var(--space-md)',
+                border: '1px solid var(--color-error)'
+            }}>
+                <span style={{ fontSize: '0.875rem', color: 'var(--color-error)' }}>
+                    Update check failed: {error}
+                </span>
+            </div>
+        );
     }
 
     if (!updateInfo?.available) {

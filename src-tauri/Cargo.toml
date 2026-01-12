@@ -1,6 +1,6 @@
 [package]
 name = "nc-data-export"
-version = "0.1.7"
+version = "0.1.8"
 description = "N-Central Data Export Tool - Cross-platform data export utility"
 authors = ["FrazierSystems"]
 edition = "2021"
