@@ -1,0 +1,23 @@
+{
+  "version": "0.1.9",
+  "notes": "See the assets below to download and install this version.",
+  "pub_date": "2026-01-12T06:46:08.883Z",
+  "platforms": {
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTQjdYVWQ1Ymduc3Z3WmNMdGxiM1pKNUx5UVJjK1kxcUxBUXRwSzZtTi9qd2VwUlhCODVQbjBCN0x6WmppellLLzZuSjgwVFJsWjZJVFhVSkdEQk5FaGtFKzl1OUJya1FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY4MjAwMzYwCWZpbGU6Ti14cG9ydCBEYXRhIFRvb2xfMC4xLjlfYW1kNjQuQXBwSW1hZ2UKSzhJWGpETXd4WXUzRW5IVDJDZ0RHVmIrTldyQ1p1aFBQQVFyWmYza0tvOWh0emJ1djFIMEtTSFNqQWp4djNiaWhSSURRS01zcVBVcW5RZkpKbkhnQXc9PQo=",
+      "url": "https://github.com/theonlytruebigmac/n-xport/releases/download/v0.1.9/N-xport.Data.Tool_0.1.9_amd64.AppImage"
+    },
+    "linux-x86_64-appimage": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTQjdYVWQ1Ymduc3Z3WmNMdGxiM1pKNUx5UVJjK1kxcUxBUXRwSzZtTi9qd2VwUlhCODVQbjBCN0x6WmppellLLzZuSjgwVFJsWjZJVFhVSkdEQk5FaGtFKzl1OUJya1FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY4MjAwMzYwCWZpbGU6Ti14cG9ydCBEYXRhIFRvb2xfMC4xLjlfYW1kNjQuQXBwSW1hZ2UKSzhJWGpETXd4WXUzRW5IVDJDZ0RHVmIrTldyQ1p1aFBQQVFyWmYza0tvOWh0emJ1djFIMEtTSFNqQWp4djNiaWhSSURRS01zcVBVcW5RZkpKbkhnQXc9PQo=",
+      "url": "https://github.com/theonlytruebigmac/n-xport/releases/download/v0.1.9/N-xport.Data.Tool_0.1.9_amd64.AppImage"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTQjdYVWQ1Ymduc3E5R3Nnb1ZiK0c3V1JrK3huM2ltZzQ3TExvQnhjK1g5a3NLcWRISmNna3RJZWttd1VCZGg1b2czTWFOaVVmdDR1cEF2ZGtLdEh2Ri9IYkpKaGVKRXdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY4MjAwMzYwCWZpbGU6Ti14cG9ydCBEYXRhIFRvb2xfMC4xLjlfYW1kNjQuZGViClBka1ZYNEkrNW1PTEFkOTVBZVVtUGNxT0xYY0ZBdDZSZUFrb21zbTBHTjFSTEl2TkQ4bktrQ0hpeEtmeG1NeW9zbk5zT2xiaVlBdG1BbDZWWmlya0RRPT0K",
+      "url": "https://github.com/theonlytruebigmac/n-xport/releases/download/v0.1.9/N-xport.Data.Tool_0.1.9_amd64.deb"
+    },
+    "linux-x86_64-rpm": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTQjdYVWQ1Ymduc21nL1NtL0d1MHhFdTA0SHJFSllIZk83SlVsaHFJQ2hMVVRUaUh3ejhJdFk1eTJubzI4RDZ5RUlQaXVpSEcvZ2dzNG1aWlZncVRVREpyZ05ZTlNJSEFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzY4MjAwMzYwCWZpbGU6Ti14cG9ydCBEYXRhIFRvb2wtMC4xLjktMS54ODZfNjQucnBtCnVMbVlwWjFsKzNXNmljaTkyWFc0WTBLTGhXTjEzYVBqbmdXelFjZVFLZGRiZVJtR1FDQUhkeXY3U3NJdWpkVXY1S1hWWEllR0R4RHZRc1h1Ujcza0JBPT0K",
+      "url": "https://github.com/theonlytruebigmac/n-xport/releases/download/v0.1.9/N-xport.Data.Tool-0.1.9-1.x86_64.rpm"
+    }
+  }
+}
