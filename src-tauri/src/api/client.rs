@@ -371,6 +371,16 @@ impl NcClient {
         self.post(&path, customer).await
     }
 
+    /// Create a site under a customer
+    pub async fn create_site(
+        &self,
+        customer_id: i64,
+        site: &serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
+        let path = endpoints::customer_sites(customer_id);
+        self.post(&path, site).await
+    }
+
     /// Create a user role
     pub async fn create_user_role(
         &self,

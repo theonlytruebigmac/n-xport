@@ -45,6 +45,11 @@ pub fn service_org_customers(so_id: i64) -> String {
     format!("/api/service-orgs/{}/customers", so_id)
 }
 
+/// Build URL for customer sites (for creating sites under a customer)
+pub fn customer_sites(customer_id: i64) -> String {
+    format!("/api/customers/{}/sites", customer_id)
+}
+
 /// Build URL for service org sites (via org-units)
 pub fn service_org_sites(_so_id: i64) -> String {
     format!("/api/sites")

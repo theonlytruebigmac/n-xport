@@ -256,11 +256,68 @@ pub async fn start_migration(
                             dest_site_id
                         );
                     } else {
-                        tracing::warn!(
-                            "Site '{}' under customer '{}' does not exist on destination - skipping",
-                            source_site.site_name,
-                            src_cust_name
-                        );
+                        // Site doesn't exist on destination - CREATE it
+                        // First, find the destination customer ID for this source customer
+                        if let Some(&dest_cust_id) = mapping.customers.get(&src_parent_id) {
+                            tracing::info!(
+                                "Creating site '{}' under customer '{}' (dest customer ID: {})...",
+                                source_site.site_name,
+                                src_cust_name,
+                                dest_cust_id
+                            );
+
+                            let payload = serde_json::json!({
+                                "siteName": source_site.site_name,
+                                "externalId": source_site.external_id,
+                                "contactFirstName": source_site.contact_first_name,
+                                "contactLastName": source_site.contact_last_name,
+                                "contactEmail": source_site.contact_email,
+                                "contactPhone": source_site.contact_phone,
+                                "street1": source_site.street1,
+                                "street2": source_site.street2,
+                                "city": source_site.city,
+                                "stateProv": source_site.state_prov,
+                                "country": source_site.country,
+                                "postalCode": source_site.postal_code,
+                            });
+
+                            match dest.create_site(dest_cust_id, &payload).await {
+                                Ok(resp) => {
+                                    let id = resp["siteId"]
+                                        .as_i64()
+                                        .or_else(|| resp["id"].as_i64())
+                                        .unwrap_or(0);
+                                    if id != 0 {
+                                        mapping.sites.insert(source_site.site_id, id);
+                                        mapping.org_units.insert(source_site.site_id, id);
+                                        tracing::info!(
+                                            "Created site '{}' (ID: {})",
+                                            source_site.site_name,
+                                            id
+                                        );
+                                    } else {
+                                        tracing::warn!(
+                                            "Site '{}' created but no ID returned in response: {:?}",
+                                            source_site.site_name,
+                                            resp
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to create site '{}': {}",
+                                        source_site.site_name,
+                                        e
+                                    );
+                                }
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Site '{}' under customer '{}' skipped - parent customer not mapped to destination",
+                                source_site.site_name,
+                                src_cust_name
+                            );
+                        }
                     }
                 }
             }
