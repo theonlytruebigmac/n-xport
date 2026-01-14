@@ -83,7 +83,19 @@ pub async fn start_migration(
         );
     };
 
+    // Log emit helper - sends logs to frontend Activity Log
+    let emit_log = |level: &str, message: &str| {
+        let _ = app_handle.emit(
+            "backend-log",
+            LogMessage {
+                level: level.to_string(),
+                message: message.to_string(),
+            },
+        );
+    };
+
     report_progress("Migration", "Starting migration engine...", 0.0);
+    emit_log("info", "Starting migration engine...");
 
     // 1. Customers
     if options.customers {
@@ -134,10 +146,17 @@ pub async fn start_migration(
                     let dest_id = if let Some(&id) =
                         dest_name_map.get(&source_cust.customer_name.to_lowercase())
                     {
-                        tracing::info!(
+                        let msg = format!(
                             "Customer '{}' already exists on destination (ID: {})",
-                            source_cust.customer_name,
-                            id
+                            source_cust.customer_name, id
+                        );
+                        tracing::info!("{}", msg);
+                        let _ = app_handle.emit(
+                            "backend-log",
+                            LogMessage {
+                                level: "debug".to_string(),
+                                message: msg,
+                            },
                         );
                         id
                     } else {
@@ -157,18 +176,32 @@ pub async fn start_migration(
                                     .as_i64()
                                     .or_else(|| resp["id"].as_i64())
                                     .unwrap_or(0);
-                                tracing::info!(
+                                let msg = format!(
                                     "Created customer '{}' (ID: {})",
-                                    source_cust.customer_name,
-                                    id
+                                    source_cust.customer_name, id
+                                );
+                                tracing::info!("{}", msg);
+                                let _ = app_handle.emit(
+                                    "backend-log",
+                                    LogMessage {
+                                        level: "success".to_string(),
+                                        message: msg,
+                                    },
                                 );
                                 id
                             }
                             Err(e) => {
-                                tracing::error!(
+                                let msg = format!(
                                     "Failed to create customer '{}': {}",
-                                    source_cust.customer_name,
-                                    e
+                                    source_cust.customer_name, e
+                                );
+                                tracing::error!("{}", msg);
+                                let _ = app_handle.emit(
+                                    "backend-log",
+                                    LogMessage {
+                                        level: "error".to_string(),
+                                        message: msg,
+                                    },
                                 );
                                 0
                             }
@@ -259,12 +292,12 @@ pub async fn start_migration(
                         // Site doesn't exist on destination - CREATE it
                         // First, find the destination customer ID for this source customer
                         if let Some(&dest_cust_id) = mapping.customers.get(&src_parent_id) {
-                            tracing::info!(
+                            let msg = format!(
                                 "Creating site '{}' under customer '{}' (dest customer ID: {})...",
-                                source_site.site_name,
-                                src_cust_name,
-                                dest_cust_id
+                                source_site.site_name, src_cust_name, dest_cust_id
                             );
+                            tracing::info!("{}", msg);
+                            emit_log("info", &msg);
 
                             let payload = serde_json::json!({
                                 "siteName": source_site.site_name,
@@ -290,45 +323,45 @@ pub async fn start_migration(
                                     if id != 0 {
                                         mapping.sites.insert(source_site.site_id, id);
                                         mapping.org_units.insert(source_site.site_id, id);
-                                        tracing::info!(
+                                        let msg = format!(
                                             "Created site '{}' (ID: {})",
-                                            source_site.site_name,
-                                            id
+                                            source_site.site_name, id
                                         );
+                                        tracing::info!("{}", msg);
+                                        emit_log("success", &msg);
                                     } else {
-                                        tracing::warn!(
-                                            "Site '{}' created but no ID returned in response: {:?}",
-                                            source_site.site_name,
-                                            resp
-                                        );
+                                        let msg = format!("Site '{}' created but no ID returned in response: {:?}", source_site.site_name, resp);
+                                        tracing::warn!("{}", msg);
+                                        emit_log("warning", &msg);
                                     }
                                 }
                                 Err(e) => {
-                                    tracing::error!(
+                                    let msg = format!(
                                         "Failed to create site '{}': {}",
-                                        source_site.site_name,
-                                        e
+                                        source_site.site_name, e
                                     );
+                                    tracing::error!("{}", msg);
+                                    emit_log("error", &msg);
                                 }
                             }
                         } else {
-                            tracing::warn!(
-                                "Site '{}' under customer '{}' skipped - parent customer not mapped to destination",
-                                source_site.site_name,
-                                src_cust_name
-                            );
+                            let msg = format!("Site '{}' under customer '{}' skipped - parent customer not mapped to destination", source_site.site_name, src_cust_name);
+                            tracing::warn!("{}", msg);
+                            emit_log("warning", &msg);
                         }
                     }
                 }
             }
         }
 
-        tracing::info!(
+        let msg = format!(
             "Org unit mapping: {} customers, {} sites, {} total org_units",
             mapping.customers.len(),
             mapping.sites.len(),
             mapping.org_units.len()
         );
+        tracing::info!("{}", msg);
+        emit_log("info", &msg);
     }
 
     // 2. User Roles

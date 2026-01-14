@@ -149,6 +149,12 @@ function App() {
       setProgress(event.payload);
       addLog('info', `${event.payload.phase}: ${event.payload.message}`);
     });
+
+    // Listen for backend logs
+    listen<{ level: string; message: string }>('backend-log', (event) => {
+      const level = event.payload.level as LogEntry['level'];
+      addLog(level, event.payload.message);
+    });
   };
 
   const addLog = useCallback((level: LogEntry['level'], message: string) => {

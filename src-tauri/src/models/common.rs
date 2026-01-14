@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize, Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Helper to serialize a Vec as a semicolon-separated string for CSV
 pub fn serialize_vec_to_string<S, T>(v: &Vec<T>, s: S) -> Result<S::Ok, S::Error>
@@ -6,7 +6,8 @@ where
     S: Serializer,
     T: std::fmt::Display,
 {
-    let combined = v.iter()
+    let combined = v
+        .iter()
         .map(|item| item.to_string())
         .collect::<Vec<String>>()
         .join("; ");
@@ -21,7 +22,8 @@ where
 {
     match v {
         Some(vec) if !vec.is_empty() => {
-            let combined = vec.iter()
+            let combined = vec
+                .iter()
                 .map(|item| item.to_string())
                 .collect::<Vec<String>>()
                 .join("; ");
@@ -31,36 +33,35 @@ where
     }
 }
 
-
 /// Helper to deserialize string or number as i64
 pub fn string_or_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
 {
     use serde::de::{self, Visitor};
-    
+
     struct StringOrInt;
-    
+
     impl<'de> Visitor<'de> for StringOrInt {
         type Value = i64;
-        
+
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("string or integer")
         }
-        
+
         fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
             Ok(v)
         }
-        
+
         fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
             Ok(v as i64)
         }
-        
+
         fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
             v.parse().map_err(de::Error::custom)
         }
     }
-    
+
     deserializer.deserialize_any(StringOrInt)
 }
 
@@ -70,32 +71,32 @@ where
     D: Deserializer<'de>,
 {
     use serde::de::{self, Visitor};
-    
+
     struct OptionStringOrInt;
-    
+
     impl<'de> Visitor<'de> for OptionStringOrInt {
         type Value = Option<i64>;
-        
+
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("null, string or integer")
         }
-        
+
         fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
             Ok(None)
         }
-        
+
         fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
             Ok(None)
         }
-        
+
         fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
             Ok(Some(v))
         }
-        
+
         fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
             Ok(Some(v as i64))
         }
-        
+
         fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
             if v.is_empty() {
                 Ok(None)
@@ -104,7 +105,7 @@ where
             }
         }
     }
-    
+
     deserializer.deserialize_any(OptionStringOrInt)
 }
 
@@ -174,4 +175,12 @@ pub struct ProgressUpdate {
     pub percent: f32,
     pub current: u32,
     pub total: u32,
+}
+
+/// Log message for UI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogMessage {
+    pub level: String,
+    pub message: String,
 }
