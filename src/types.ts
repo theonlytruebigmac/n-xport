@@ -58,6 +58,8 @@ export interface ExportResult {
   message: string;
   filesCreated: string[];
   totalRecords: number;
+  warnings: string[];
+  errors: string[];
 }
 
 export interface ProgressUpdate {
@@ -75,6 +77,14 @@ export interface ExportType {
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface MigrationOptions {
+  customers: boolean;
+  userRoles: boolean;
+  accessGroups: boolean;
+  users: boolean;
+  orgProperties: boolean;
+}
 
 export interface AppState {
   connectionStatus: ConnectionStatus;

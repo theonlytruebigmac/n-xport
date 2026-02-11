@@ -61,6 +61,7 @@ pub fn run() {
             commands::start_export,
             commands::get_export_types,
             commands::open_directory,
+            commands::cancel_export,
             // Migration commands
             commands::start_migration,
         ])

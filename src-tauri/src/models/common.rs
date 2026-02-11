@@ -150,6 +150,7 @@ pub struct ExportOptions {
     pub org_properties: bool,
     pub device_properties: bool,
     pub users: bool,
+    pub device_assets: bool,
 }
 
 /// Export format

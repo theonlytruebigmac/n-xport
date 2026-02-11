@@ -4,7 +4,10 @@ import type {
     Profile,
     Settings,
     ConnectionResult,
-    ExportType
+    ExportType,
+    ExportOptions,
+    ExportResult,
+    MigrationOptions
 } from './types';
 
 // Connection commands
@@ -85,10 +88,10 @@ export async function openDirectory(path: string): Promise<void> {
 // Export commands
 export async function startExport(
     outputDir: string,
-    options: any,
+    options: ExportOptions,
     formats: string[],
     serviceOrgId: number
-): Promise<any> {
+): Promise<ExportResult> {
     return invoke('start_export', {
         outputDir,
         options,
@@ -97,10 +100,14 @@ export async function startExport(
     });
 }
 
-export async function startMigration(options: any, sourceSoId: number, destSoId: number): Promise<any> {
+export async function startMigration(options: MigrationOptions, sourceSoId: number, destSoId: number): Promise<ConnectionResult> {
     return invoke('start_migration', { options, sourceSoId, destSoId });
 }
 
 export async function getExportTypes(): Promise<ExportType[]> {
     return invoke('get_export_types');
+}
+
+export async function cancelExport(): Promise<void> {
+    return invoke('cancel_export');
 }

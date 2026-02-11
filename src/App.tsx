@@ -5,10 +5,16 @@ import { open } from '@tauri-apps/plugin-dialog';
 import './index.css';
 import * as api from './api';
 import { UpdateBanner } from './useUpdateChecker';
+import { HomePanel } from './components/HomePanel';
+import { SetupPanel } from './components/SetupPanel';
+import { ConfigurePanel } from './components/ConfigurePanel';
+import { ProgressPanel } from './components/ProgressPanel';
+import { NewProfileModal } from './components/NewProfileModal';
 import type {
   Profile,
   ConnectionStatus,
   ExportOptions,
+  MigrationOptions,
   ProgressUpdate,
   LogEntry,
   ExportType
@@ -43,16 +49,7 @@ function App() {
 
   // Logs
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [verboseLogging, setVerboseLogging] = useState<boolean>(false);
   const isInitialLoad = useRef(false);
-  const logRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll logs
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [logs]);
 
   // Workflow state
   const [currentStep, setCurrentStep] = useState<'home' | 'setup' | 'configure' | 'exporting' | 'complete'>('home');
@@ -66,7 +63,6 @@ function App() {
   const [destFqdn, setDestFqdn] = useState('');
   const [destJwt, setDestJwt] = useState('');
   const [destApiUsername, setDestApiUsername] = useState('');
-
   const [destServiceOrgId, setDestServiceOrgId] = useState('');
 
   // App version
@@ -95,7 +91,6 @@ function App() {
           setServiceOrgId(active.source.serviceOrgId.toString());
         }
 
-        // Load credentials for the active profile (but don't auto-connect)
         try {
           const storedJwt = await api.getCredentials(active.name);
           if (storedJwt) setJwt(storedJwt);
@@ -106,7 +101,6 @@ function App() {
           // Ignore error loading creds
         }
 
-        // Handle Destination if present (migration profile) - load data only
         if (active.type === 'migration' && active.destination) {
           setAppMode('migrate');
           setDestFqdn(active.destination.fqdn);
@@ -114,8 +108,6 @@ function App() {
             setDestServiceOrgId(active.destination.serviceOrgId.toString());
           }
           setDestApiUsername(active.destination.username || '');
-
-          // Load dest JWT if available
           try {
             const storedDestJwt = await api.getCredentials(`${active.name}_dest`);
             if (storedDestJwt) setDestJwt(storedDestJwt);
@@ -124,7 +116,6 @@ function App() {
           }
         }
 
-        // Don't auto-connect - user will connect manually from setup page
         addLog('info', `Profile "${active.name}" loaded. Click Export or Migrate to continue.`);
       }
     } catch (e) {
@@ -136,7 +127,6 @@ function App() {
     try {
       const types = await api.getExportTypes();
       setExportTypes(types);
-      // Select defaults
       const defaults = new Set(types.filter(t => t.default).map(t => t.id));
       setSelectedTypes(defaults);
     } catch (e) {
@@ -149,8 +139,6 @@ function App() {
       setProgress(event.payload);
       addLog('info', `${event.payload.phase}: ${event.payload.message}`);
     });
-
-    // Listen for backend logs
     listen<{ level: string; message: string }>('backend-log', (event) => {
       const level = event.payload.level as LogEntry['level'];
       addLog(level, event.payload.message);
@@ -158,29 +146,15 @@ function App() {
   };
 
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
-    // Store ALL logs, filtering happens at display time
     setLogs(prev => {
-      // Don't add duplicate consecutive logs
-      if (prev.length > 0 && prev[prev.length - 1].message === message) {
-        return prev;
-      }
-      // Keep last 2000 logs
-      return [...prev.slice(-1999), {
-        timestamp: new Date(),
-        level,
-        message
-      }];
+      if (prev.length > 0 && prev[prev.length - 1].message === message) return prev;
+      return [...prev.slice(-1999), { timestamp: new Date(), level, message }];
     });
   }, []);
-
-
 
   const handleConnect = async () => {
     if (!fqdn || !jwt) {
       addLog('error', 'Please enter server FQDN and JWT token');
-      // Note: Username/Password are optional for strict REST, but user wants them mandatory. 
-      // We will warn if missing but maybe allow if user persists? 
-      // User said: "make API Username and Password mandatory".
       if (!apiUsername || !apiPassword) {
         addLog('error', 'API Username and Password are required');
         return;
@@ -193,17 +167,15 @@ function App() {
 
     try {
       const result = await api.testConnection(fqdn, jwt, apiUsername);
-
       if (result.success) {
         setConnectionStatus('connected');
         setServerVersion(result.serverVersion || '');
         setServerUrl(result.serverUrl || fqdn);
-        // Resolve Service Org
+
         let finalSoId = result.serviceOrgId;
         let finalSoName = result.serviceOrgName;
 
         if (serviceOrgId) {
-          // If user entered an ID, use it and look up the name
           const id = parseInt(serviceOrgId);
           if (!isNaN(id)) {
             finalSoId = id;
@@ -211,14 +183,12 @@ function App() {
               try {
                 const info = await api.getServiceOrgInfo(finalSoId);
                 finalSoName = info.name;
-              } catch (e) {
-                // If lookup fails, just show ID
+              } catch {
                 finalSoName = `Unknown (ID: ${finalSoId})`;
               }
             }
           }
         } else if (result.serviceOrgId) {
-          // Auto-fill if empty
           setServiceOrgId(result.serviceOrgId.toString());
         }
 
@@ -230,14 +200,10 @@ function App() {
         addLog('success', `Connected to ${result.serverUrl || fqdn}`);
         if (result.serverVersion) addLog('info', `Server version: ${result.serverVersion}`);
 
-        // Save credentials if we have a profile
         if (activeProfile) {
           await api.saveCredentials(activeProfile.name, jwt);
           addLog('info', 'Credentials saved to keychain');
         }
-
-        // User clicked Connect manually, so stay on current step
-        // setCurrentStep('configure'); // Removed: don't auto-navigate
       } else {
         setConnectionStatus('error');
         addLog('error', result.message);
@@ -263,9 +229,7 @@ function App() {
     }
 
     try {
-      // Consider it a migration profile if in migrate mode AND destination FQDN is set
       const isMigration = appMode === 'migrate' && destFqdn;
-
       const profile: Profile = {
         name: newProfileName,
         type: isMigration ? 'migration' : 'export',
@@ -285,21 +249,17 @@ function App() {
       await api.saveProfile(profile);
       await api.setActiveProfile(newProfileName);
 
-      // Save source credentials
       if (jwt) {
         await api.saveCredentials(newProfileName, jwt);
         addLog('debug', `Saved source credentials for ${newProfileName}`);
       }
-
-      // Save dest credentials if present
       if (isMigration && destJwt) {
         await api.saveCredentials(`${newProfileName}_dest`, destJwt);
         addLog('debug', `Saved destination credentials for ${newProfileName}_dest`);
       }
 
-      await loadProfiles(); // Reload to update list
+      await loadProfiles();
       setActiveProfile(profile);
-
       addLog('success', `Profile "${newProfileName}" saved`);
       setNewProfileName('');
       setShowNewProfile(false);
@@ -317,7 +277,6 @@ function App() {
       setServiceOrgId('');
     }
 
-    // Set mode based on profile type
     if (profile.type === 'migration') {
       setAppMode('migrate');
       if (profile.destination) {
@@ -330,7 +289,6 @@ function App() {
       setAppMode('export');
     }
 
-    // Try to load JWT from keychain to populate the field
     try {
       const storedJwt = await api.getCredentials(profile.name);
       if (storedJwt) {
@@ -343,25 +301,51 @@ function App() {
         setApiUsername('');
         setApiPassword('');
       }
-    } catch (e) {
+    } catch {
       setJwt('');
       setApiUsername('');
       setApiPassword('');
     }
 
-    // Also load destination JWT if migration profile
     if (profile.type === 'migration') {
       try {
         const storedDestJwt = await api.getCredentials(`${profile.name}_dest`);
         if (storedDestJwt) {
           setDestJwt(storedDestJwt);
-          // Password unused in UI state
           setDestApiUsername(profile.destination?.username || '');
+
+          // Auto-reconnect destination server
+          if (profile.destination?.fqdn) {
+            setDestConnectionStatus('connecting');
+            addLog('info', `Connecting to destination ${profile.destination.fqdn}...`);
+            try {
+              const destResult = await api.connectDestination(
+                profile.destination.fqdn,
+                storedDestJwt,
+                profile.destination.username
+              );
+              if (destResult.success) {
+                setDestConnectionStatus('connected');
+                setDestServerUrl(destResult.serverUrl || profile.destination.fqdn);
+                setDestServerVersion(destResult.serverVersion || '');
+                if (destResult.serviceOrgId && destResult.serviceOrgName) {
+                  setDestConnectedServiceOrg({ id: destResult.serviceOrgId, name: destResult.serviceOrgName });
+                }
+                addLog('success', `Destination connected: ${destResult.serverUrl || profile.destination.fqdn}`);
+              } else {
+                setDestConnectionStatus('disconnected');
+                addLog('warning', 'Destination credentials expired or invalid. Please reconnect.');
+              }
+            } catch (destErr) {
+              setDestConnectionStatus('disconnected');
+              addLog('warning', `Destination auto-connect failed: ${destErr}`);
+            }
+          }
         } else {
           setDestJwt('');
           setDestApiUsername('');
         }
-      } catch (e) {
+      } catch {
         setDestJwt('');
         setDestApiUsername('');
       }
@@ -369,8 +353,6 @@ function App() {
 
     try {
       await api.setActiveProfile(profile.name);
-
-      // Try to connect with saved credentials
       const hasCreds = await api.hasCredentials(profile.name);
       if (hasCreds) {
         setConnectionStatus('connecting');
@@ -380,23 +362,21 @@ function App() {
           setConnectionStatus('connected');
           setServerVersion(result.serverVersion || '');
           setServerUrl(result.serverUrl || profile.source.fqdn);
-          // Resolve Service Org
+
           let finalSoId = result.serviceOrgId;
           let finalSoName = result.serviceOrgName;
 
-          // Check if profile has a specific SO ID
           if (profile.source.serviceOrgId) {
             finalSoId = profile.source.serviceOrgId;
             if (finalSoId !== result.serviceOrgId && finalSoId) {
               try {
                 const info = await api.getServiceOrgInfo(finalSoId);
                 finalSoName = info.name;
-              } catch (e) {
+              } catch {
                 finalSoName = `Unknown (ID: ${finalSoId})`;
               }
             }
           } else if (result.serviceOrgId) {
-            // Profile has no ID, but API returned one - auto-fill form
             setServiceOrgId(result.serviceOrgId.toString());
           }
 
@@ -407,8 +387,6 @@ function App() {
 
           addLog('success', `Connected to ${result.serverUrl || profile.source.fqdn}`);
           if (result.serverVersion) addLog('info', `Server version: ${result.serverVersion}`);
-          // Stay on current step - user navigates manually
-          // setCurrentStep('configure'); // Removed: don't auto-navigate
         } else {
           setConnectionStatus('disconnected');
           addLog('warning', 'Saved credentials expired or invalid. Please enter JWT token.');
@@ -423,13 +401,8 @@ function App() {
   };
 
   const handleBrowseOutput = async () => {
-    const selected = await open({
-      directory: true,
-      title: 'Select Export Directory'
-    });
-    if (selected) {
-      setOutputDir(selected);
-    }
+    const selected = await open({ directory: true, title: 'Select Export Directory' });
+    if (selected) setOutputDir(selected);
   };
 
   const handleOpenOutput = async () => {
@@ -444,15 +417,8 @@ function App() {
   };
 
   const handleExport = async () => {
-    if (!serviceOrgId) {
-      addLog('error', 'Please enter Service Organization ID');
-      return;
-    }
-
-    if (selectedTypes.size === 0) {
-      addLog('error', 'Please select at least one data type to export');
-      return;
-    }
+    if (!serviceOrgId) { addLog('error', 'Please enter Service Organization ID'); return; }
+    if (selectedTypes.size === 0) { addLog('error', 'Please select at least one data type to export'); return; }
 
     setCurrentStep('exporting');
     setProgress(null);
@@ -471,18 +437,24 @@ function App() {
         users: selectedTypes.has('users')
       };
 
-      const result = await api.startExport(
-        outputDir,
-        options,
-        Array.from(exportFormats),
-        parseInt(serviceOrgId)
-      );
-
+      const result = await api.startExport(outputDir, options, Array.from(exportFormats), parseInt(serviceOrgId));
       if (result.success) {
         addLog('success', result.message);
         addLog('info', `Files: ${result.filesCreated.join(', ')}`);
       } else {
         addLog('error', result.message);
+      }
+      // Surface any warnings
+      if (result.warnings && result.warnings.length > 0) {
+        for (const w of result.warnings) {
+          addLog('warning', w);
+        }
+      }
+      // Surface any errors
+      if (result.errors && result.errors.length > 0) {
+        for (const e of result.errors) {
+          addLog('error', e);
+        }
       }
     } catch (e) {
       addLog('error', `Export failed: ${e}`);
@@ -502,26 +474,18 @@ function App() {
     addLog('info', 'Starting migration...');
 
     try {
-      const options: any = {
+      const options: MigrationOptions = {
         customers: selectedTypes.has('customers'),
         userRoles: selectedTypes.has('user_roles'),
         accessGroups: selectedTypes.has('access_groups'),
         users: selectedTypes.has('users'),
         orgProperties: selectedTypes.has('org_properties'),
-        deviceProperties: selectedTypes.has('device_properties'),
       };
 
-      // Use user-specified destination SO ID if set, otherwise use connected SO
       const actualDestSoId = destServiceOrgId ? parseInt(destServiceOrgId) : destConnectedServiceOrg.id;
-
       addLog('info', `Starting migration: Source SO ${parseInt(serviceOrgId)} → Destination SO ${actualDestSoId}`);
 
-      const result = await api.startMigration(
-        options,
-        parseInt(serviceOrgId),
-        actualDestSoId
-      );
-
+      const result = await api.startMigration(options, parseInt(serviceOrgId), actualDestSoId);
       if (result.success) {
         addLog('success', result.message);
       } else {
@@ -537,11 +501,8 @@ function App() {
   const toggleExportType = (id: string) => {
     setSelectedTypes(prev => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -549,11 +510,8 @@ function App() {
   const toggleFormat = (format: string) => {
     setExportFormats(prev => {
       const next = new Set(prev);
-      if (next.has(format)) {
-        if (next.size > 1) next.delete(format);
-      } else {
-        next.add(format);
-      }
+      if (next.has(format)) { if (next.size > 1) next.delete(format); }
+      else next.add(format);
       return next;
     });
   };
@@ -598,9 +556,7 @@ function App() {
                       : connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
                   </span>
                   {serverVersion && (
-                    <span className="badge badge-info" style={{ marginLeft: 'var(--space-sm)' }}>
-                      v{serverVersion}
-                    </span>
+                    <span className="badge badge-info" style={{ marginLeft: 'var(--space-sm)' }}>v{serverVersion}</span>
                   )}
                 </>
               )}
@@ -632,161 +588,17 @@ function App() {
 
       <div className="main-content workflow-container">
         <main className="content-area centered-dashboard">
-          {/* Update Banner */}
           <UpdateBanner />
 
-          {/* Home Page - Mode Selection */}
           {currentStep === 'home' && (
-            <div className="centered-dashboard fade-in" style={{
-              maxWidth: 750,
-              margin: '0 auto',
-              paddingTop: 'var(--space-lg)',
-              display: 'flex',
-              flexDirection: 'column',
-              height: 'calc(100vh - 120px)'
-            }}>
-              <div style={{ textAlign: 'center', marginBottom: 'var(--space-xl)' }}>
-                <h1 style={{
-                  fontSize: '2rem',
-                  fontWeight: 600,
-                  marginBottom: 'var(--space-xs)',
-                  color: 'var(--color-text)'
-                }}>
-                  <span style={{ color: 'var(--color-accent)' }}>N-xport</span> Data Tool
-                </h1>
-                <p style={{
-                  color: 'var(--color-text-muted)',
-                  fontSize: '0.9375rem'
-                }}>
-                  Export or migrate data between N-Central servers
-                </p>
-              </div>
-
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, 1fr)',
-                gap: 'var(--space-lg)',
-                flex: 1,
-                minHeight: 280
-              }}>
-                {/* Export Card */}
-                <div
-                  className="card"
-                  onClick={() => {
-                    setAppMode('export');
-                    setCurrentStep('setup');
-                  }}
-                  style={{
-                    cursor: 'pointer',
-                    padding: 0,
-                    overflow: 'hidden',
-                    transition: 'all 0.2s ease',
-                    border: '1px solid var(--color-border)',
-                    display: 'flex',
-                    flexDirection: 'column'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--color-accent)';
-                    e.currentTarget.style.transform = 'translateY(-2px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--color-border)';
-                    e.currentTarget.style.transform = 'translateY(0)';
-                  }}
-                >
-                  <div style={{ height: 4, background: 'var(--color-accent)' }} />
-                  <div style={{
-                    padding: 'var(--space-xl)',
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    textAlign: 'center'
-                  }}>
-                    <h2 style={{
-                      fontSize: '1.5rem',
-                      fontWeight: 600,
-                      marginBottom: 'var(--space-sm)',
-                      color: 'var(--color-text)'
-                    }}>Export Data</h2>
-                    <p style={{
-                      color: 'var(--color-text-muted)',
-                      fontSize: '0.875rem',
-                      lineHeight: 1.5,
-                      maxWidth: 220
-                    }}>
-                      Export customers, sites, users, and devices to CSV or JSON
-                    </p>
-                  </div>
-                </div>
-
-                {/* Migration Card */}
-                <div
-                  className="card"
-                  onClick={() => {
-                    setAppMode('migrate');
-                    setCurrentStep('setup');
-                  }}
-                  style={{
-                    cursor: 'pointer',
-                    padding: 0,
-                    overflow: 'hidden',
-                    transition: 'all 0.2s ease',
-                    border: '1px solid var(--color-border)',
-                    display: 'flex',
-                    flexDirection: 'column'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--color-success)';
-                    e.currentTarget.style.transform = 'translateY(-2px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = 'var(--color-border)';
-                    e.currentTarget.style.transform = 'translateY(0)';
-                  }}
-                >
-                  <div style={{ height: 4, background: 'var(--color-success)' }} />
-                  <div style={{
-                    padding: 'var(--space-xl)',
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    textAlign: 'center'
-                  }}>
-                    <h2 style={{
-                      fontSize: '1.5rem',
-                      fontWeight: 600,
-                      marginBottom: 'var(--space-sm)',
-                      color: 'var(--color-text)'
-                    }}>Migrate Data</h2>
-                    <p style={{
-                      color: 'var(--color-text-muted)',
-                      fontSize: '0.875rem',
-                      lineHeight: 1.5,
-                      maxWidth: 220
-                    }}>
-                      Transfer customers, users, roles, and properties between servers
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{
-                textAlign: 'center',
-                marginTop: 'var(--space-lg)',
-                color: 'var(--color-text-muted)',
-                fontSize: '0.75rem',
-                opacity: 0.5
-              }}>
-                v{appVersion}
-              </div>
-            </div>
+            <HomePanel
+              appVersion={appVersion}
+              onSelectExport={() => { setAppMode('export'); setCurrentStep('setup'); }}
+              onSelectMigrate={() => { setAppMode('migrate'); setCurrentStep('setup'); }}
+            />
           )}
 
-          {/* Workflow Indicator - Only show for non-home steps */}
+          {/* Workflow Indicator */}
           {currentStep !== 'home' && (
             <div className="step-indicator">
               <div className={`step-item ${currentStep === 'setup' ? 'active' : 'completed'}`}>
@@ -807,483 +619,99 @@ function App() {
           )}
 
           {currentStep === 'setup' && (
-            <div className="centered-dashboard fade-in">
-              {/* Back to Home / Mode Indicator */}
-              <div className="card" style={{ padding: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => setCurrentStep('home')}
-                    style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}
-                  >
-                    ← Back
-                  </button>
-                  <span style={{
-                    color: 'var(--color-text)',
-                    fontWeight: 600
-                  }}>
-                    {appMode === 'export' ? 'Export Mode' : 'Migration Mode'}
-                  </span>
-                  <div style={{ width: 80 }} /> {/* Spacer for centering */}
-                </div>
-              </div>
-
-              <div>
-                {/* Profile Selection */}
-                <div className="card card-compact fade-in" style={{ marginBottom: 'var(--space-md)' }}>
-                  <div className="card-header">
-                    <h2 className="card-title">Select <span className="header-accent">Profile</span></h2>
-                  </div>
-                  <div className="profiles-grid">
-                    {profiles.map(profile => (
-                      <div
-                        key={profile.name}
-                        className={`profile-card ${activeProfile?.name === profile.name ? 'active' : ''}`}
-                        onClick={() => handleSelectProfile(profile)}
-                      >
-                        <div className="profile-info">
-                          <span className="profile-name">{profile.name}</span>
-                          <span className="profile-fqdn">{profile.source.fqdn}</span>
-                        </div>
-                        <button
-                          className="profile-delete"
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            if (confirm(`Delete profile "${profile.name}"?`)) {
-                              try {
-                                await api.deleteProfile(profile.name);
-                                await api.deleteCredentials(profile.name);
-                                addLog('info', `Deleted profile "${profile.name}"`);
-                                await loadProfiles();
-                                if (activeProfile?.name === profile.name) {
-                                  setActiveProfile(null);
-                                  setFqdn('');
-                                  setServiceOrgId('');
-                                }
-                              } catch (err) {
-                                addLog('error', `Failed to delete: ${err}`);
-                              }
-                            }
-                          }}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                    <button className="profile-card new" onClick={() => setShowNewProfile(true)}>
-                      <span>+ New Profile</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className={appMode === 'migrate' ? 'setup-grid' : ''}>
-                {/* Source Connection / Direct Connection */}
-                <div className="card card-compact fade-in">
-                  <div className="card-header">
-                    <h2 className="card-title">
-                      {appMode === 'migrate' ? 'Source' : 'Direct'} <span className="header-accent">Connection</span>
-                    </h2>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Server FQDN</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="ncentral.example.com"
-                      value={fqdn}
-                      onChange={e => setFqdn(e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">API Username <span className="text-secondary" style={{ fontSize: '0.7em' }}>(Required for User Add)</span></label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="admin@example.com"
-                      value={apiUsername}
-                      onChange={e => setApiUsername(e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">JWT Token</label>
-                    <input
-                      type="password"
-                      className="form-input mono"
-                      placeholder="eyJhbGciOiJIUzI1NiIs..."
-                      value={jwt}
-                      onChange={e => setJwt(e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Target Service Org ID</label>
-                    <input
-                      type="number"
-                      className="form-input"
-                      placeholder="Service Org ID (optional)"
-                      value={serviceOrgId}
-                      onChange={e => setServiceOrgId(e.target.value)}
-                    />
-                  </div>
-                  <button
-                    className="btn btn-primary btn-lg"
-                    style={{ width: '100%' }}
-                    onClick={handleConnect}
-                    disabled={connectionStatus === 'connecting'}
-                  >
-                    {connectionStatus === 'connecting' ? 'Connecting...' : appMode === 'migrate' ? 'Connect Source' : 'Connect Now'}
-                  </button>
-                </div>
-
-                {/* Destination Connection (Migration only) */}
-                {appMode === 'migrate' && (
-                  <div className="card card-compact fade-in">
-                    <div className="card-header">
-                      <h2 className="card-title">Destination <span className="header-accent">Connection</span></h2>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Server FQDN</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        placeholder="destination.example.com"
-                        value={destFqdn}
-                        onChange={e => setDestFqdn(e.target.value)}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">API Username <span className="text-secondary" style={{ fontSize: '0.7em' }}>(Required for User Add)</span></label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        placeholder="admin@example.com"
-                        value={destApiUsername}
-                        onChange={e => setDestApiUsername(e.target.value)}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">JWT Token</label>
-                      <input
-                        type="password"
-                        className="form-input mono"
-                        placeholder="eyJhbGciOiJIUzI1NiIs..."
-                        value={destJwt}
-                        onChange={e => setDestJwt(e.target.value)}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Target Service Org ID</label>
-                      <input
-                        type="number"
-                        className="form-input"
-                        placeholder="Service Org ID (optional)"
-                        value={destServiceOrgId}
-                        onChange={e => setDestServiceOrgId(e.target.value)}
-                      />
-                    </div>
-                    <button
-                      className="btn btn-primary btn-lg"
-                      style={{ width: '100%' }}
-                      onClick={async () => {
-                        if (!destFqdn || !destJwt || !destApiUsername) {
-                          addLog('error', 'Please enter all Destination fields (FQDN, JWT, Username)');
-                          return;
-                        }
-                        setDestConnectionStatus('connecting');
-                        addLog('info', `Connecting to Destination: ${destFqdn}...`);
-                        try {
-                          const result = await api.connectDestination(destFqdn, destJwt, destApiUsername);
-                          if (result.success) {
-                            setDestConnectionStatus('connected');
-                            setDestServerUrl(result.serverUrl || destFqdn);
-                            setDestServerVersion(result.serverVersion || '');
-
-                            // Resolve Destination Service Org
-                            let finalDestSoId = result.serviceOrgId;
-                            let finalDestSoName = result.serviceOrgName;
-
-                            if (destServiceOrgId) {
-                              // User specified a SO ID
-                              const id = parseInt(destServiceOrgId);
-                              if (!isNaN(id)) {
-                                finalDestSoId = id;
-                                if (finalDestSoId !== result.serviceOrgId) {
-                                  try {
-                                    const info = await api.getServiceOrgInfo(finalDestSoId);
-                                    finalDestSoName = info.name;
-                                  } catch (e) {
-                                    finalDestSoName = `Unknown (ID: ${finalDestSoId})`;
-                                  }
-                                }
-                              }
-                            } else if (result.serviceOrgId) {
-                              // Auto-fill if empty
-                              setDestServiceOrgId(result.serviceOrgId.toString());
-                            }
-
-                            if (finalDestSoId && finalDestSoName) {
-                              setDestConnectedServiceOrg({ id: finalDestSoId, name: finalDestSoName });
-                              addLog('info', `Destination Service Org: ${finalDestSoName} (ID: ${finalDestSoId})`);
-                            }
-
-                            addLog('success', `Connected to Destination: ${destFqdn}`);
-                          } else {
-                            setDestConnectionStatus('error');
-                            addLog('error', `Destination Error: ${result.message}`);
-                          }
-                        } catch (e) {
-                          setDestConnectionStatus('error');
-                          addLog('error', `Destination Connection failed: ${e}`);
-                        }
-                      }}
-                      disabled={destConnectionStatus === 'connecting'}
-                    >
-                      {destConnectionStatus === 'connecting' ? 'Connecting...' : 'Connect Destination'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+            <SetupPanel
+              appMode={appMode}
+              profiles={profiles}
+              activeProfile={activeProfile}
+              fqdn={fqdn} setFqdn={setFqdn}
+              jwt={jwt} setJwt={setJwt}
+              apiUsername={apiUsername} setApiUsername={setApiUsername}
+              apiPassword={apiPassword} setApiPassword={setApiPassword}
+              serviceOrgId={serviceOrgId} setServiceOrgId={setServiceOrgId}
+              connectionStatus={connectionStatus}
+              destFqdn={destFqdn} setDestFqdn={setDestFqdn}
+              destJwt={destJwt} setDestJwt={setDestJwt}
+              destApiUsername={destApiUsername} setDestApiUsername={setDestApiUsername}
+              destServiceOrgId={destServiceOrgId} setDestServiceOrgId={setDestServiceOrgId}
+              destConnectionStatus={destConnectionStatus}
+              setDestConnectionStatus={setDestConnectionStatus}
+              setDestServerUrl={setDestServerUrl}
+              setDestServerVersion={setDestServerVersion}
+              setDestConnectedServiceOrg={setDestConnectedServiceOrg}
+              onConnect={handleConnect}
+              onSelectProfile={handleSelectProfile}
+              onShowNewProfile={() => setShowNewProfile(true)}
+              onBack={() => setCurrentStep('home')}
+              addLog={addLog}
+              loadProfiles={loadProfiles}
+              setActiveProfile={setActiveProfile}
+            />
           )}
 
           {currentStep === 'configure' && (
-            <div className="card card-compact fade-in">
-              <div className="card-header">
-                <h2 className="card-title">Configure <span className="header-accent">{appMode === 'migrate' ? 'Migration' : 'Export'}</span></h2>
-              </div>
-
-              <div className="grid-2">
-                {appMode !== 'migrate' && (
-                  <div className="form-group">
-                    <label className="form-label">Target Service Org ID</label>
-                    <input
-                      type="number"
-                      className="form-input"
-                      value={serviceOrgId}
-                      onChange={e => setServiceOrgId(e.target.value)}
-                    />
-                  </div>
-                )}
-                {appMode !== 'migrate' && (
-                  <div className="form-group">
-                    <label className="form-label">Output Directory</label>
-                    <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                      <input
-                        type="text"
-                        className="form-input"
-                        value={outputDir}
-                        onChange={e => setOutputDir(e.target.value)}
-                      />
-                      <button className="btn btn-secondary" onClick={handleBrowseOutput}>Browse</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">
-                  {appMode === 'migrate' ? 'Data to Migrate' : 'Data to Export'}
-                </label>
-                <div className="data-types-grid">
-                  {exportTypes.map(type => (
-                    <label key={type.id} className={`checkbox-item ${selectedTypes.has(type.id) ? 'selected' : ''}`}>
-                      <input type="checkbox" checked={selectedTypes.has(type.id)} onChange={() => toggleExportType(type.id)} />
-                      <span>{type.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {appMode !== 'migrate' && (
-                <div className="form-group">
-                  <label className="form-label">Export Formats</label>
-                  <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-                    {['csv', 'json'].map(f => (
-                      <label key={f} className={`checkbox-item ${exportFormats.has(f) ? 'selected' : ''}`}>
-                        <input type="checkbox" checked={exportFormats.has(f)} onChange={() => toggleFormat(f)} />
-                        <span style={{ textTransform: 'uppercase' }}>{f}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div style={{ display: 'flex', gap: 'var(--space-md)', marginTop: 'var(--space-md)' }}>
-                <button className="btn btn-secondary btn-lg" style={{ flex: 1 }} onClick={() => setCurrentStep('setup')}>
-                  Back to Setup
-                </button>
-              </div>
-            </div>
+            <ConfigurePanel
+              appMode={appMode}
+              serviceOrgId={serviceOrgId} setServiceOrgId={setServiceOrgId}
+              outputDir={outputDir} setOutputDir={setOutputDir}
+              exportTypes={exportTypes}
+              selectedTypes={selectedTypes}
+              exportFormats={exportFormats}
+              onToggleExportType={toggleExportType}
+              onToggleFormat={toggleFormat}
+              onBrowseOutput={handleBrowseOutput}
+              onBack={() => setCurrentStep('setup')}
+            />
           )}
 
           {(currentStep === 'exporting' || currentStep === 'complete') && (
-            <div className="card fade-in">
-              <div className="card-header">
-                <h2 className="card-title">
-                  {currentStep === 'exporting' ? (appMode === 'migrate' ? 'Migrating...' : 'Exporting...') : 'Complete'}
-                </h2>
-              </div>
-
-              {progress && (
-                <div className="progress-container large">
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: `${progress.percent}%` }} />
-                  </div>
-                  <div className="progress-stats">
-                    <span className="phase">{progress.phase}</span>
-                    <span className="percent">{Math.round(progress.percent)}%</span>
-                  </div>
-                  <div className="progress-message">{progress.message}</div>
-                </div>
-              )}
-
-              <div className="live-logs">
-                <div className="logs-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span>Activity Log</span>
-                  <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', fontSize: '0.75rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={verboseLogging}
-                        onChange={(e) => setVerboseLogging(e.target.checked)}
-                        style={{ width: '14px', height: '14px' }}
-                      />
-                      Verbose
-                    </label>
-                    <button
-                      className="btn btn-ghost"
-                      style={{ padding: '4px 8px', fontSize: '0.7rem' }}
-                      onClick={async () => {
-                        const { save } = await import('@tauri-apps/plugin-dialog');
-                        const { writeTextFile } = await import('@tauri-apps/plugin-fs');
-                        const filePath = await save({
-                          title: 'Export Logs',
-                          defaultPath: `nc-export-logs-${new Date().toISOString().slice(0, 10)}.txt`,
-                          filters: [{ name: 'Text Files', extensions: ['txt'] }]
-                        });
-                        if (filePath) {
-                          const logText = logs.map(l =>
-                            `[${l.timestamp.toLocaleString()}] [${l.level.toUpperCase()}] ${l.message}`
-                          ).join('\n');
-                          await writeTextFile(filePath, logText);
-                          addLog('success', `Logs exported to ${filePath}`);
-                        }
-                      }}
-                    >
-                      Export
-                    </button>
-                  </div>
-                </div>
-                <div className="log-panel" ref={logRef}>
-                  {logs
-                    .filter(log => verboseLogging || log.level !== 'debug')
-                    .slice(-500)
-                    .map((log, i) => (
-                      <div key={i} className={`log-entry ${log.level}`}>
-                        <span className="log-time">[{log.timestamp.toLocaleTimeString()}]</span> {log.message}
-                      </div>
-                    ))}
-                </div>
-              </div>
-
-              {currentStep === 'complete' && (
-                <div style={{ display: 'flex', gap: 'var(--space-md)', marginTop: 'var(--space-xl)' }}>
-                  {appMode !== 'migrate' && (
-                    <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={handleOpenOutput}>
-                      View Export Folder
-                    </button>
-                  )}
-                  <button className="btn btn-secondary btn-lg" style={{ flex: 1 }} onClick={() => setCurrentStep('configure')}>
-                    {appMode === 'migrate' ? 'New Migration' : 'Start New Export'}
-                  </button>
-                </div>
-              )}
-            </div>
+            <ProgressPanel
+              currentStep={currentStep}
+              appMode={appMode}
+              progress={progress}
+              logs={logs}
+              addLog={addLog}
+              onOpenOutput={handleOpenOutput}
+              onNewExport={() => setCurrentStep('configure')}
+              onCancel={async () => {
+                addLog('warning', 'Cancellation requested...');
+                await api.cancelExport();
+              }}
+            />
           )}
         </main>
-      </div >
+      </div>
 
       {/* Connection Drawer */}
-      {
-        connectionStatus === 'connected' && currentStep !== 'setup' && (
-          <div className="connection-fixed-status">
-            <div className="status-indicator connected" />
-            <span onClick={() => setCurrentStep('setup')}>Connected to {serverUrl}</span>
-            <button
-              className="btn btn-ghost"
-              style={{ padding: '0 4px', marginLeft: 'var(--space-sm)', color: 'var(--color-error)' }}
-              onClick={handleDisconnect}
-            >
-              Disconnect
-            </button>
-          </div>
-        )
-      }
-
-      {/* New Profile Modal - at root level for proper z-index */}
-      {showNewProfile && (
-        <div className="modal-overlay" onClick={() => setShowNewProfile(false)}>
-          <div className="card modal-content" onClick={e => e.stopPropagation()}>
-            <div className="card-header">
-              <h2 className="card-title">
-                {appMode === 'migrate' ? 'Save Migration Profile' : 'Create New Profile'}
-              </h2>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Profile Name</label>
-              <input
-                type="text"
-                className="form-input"
-                placeholder={appMode === 'migrate' ? 'My Migration' : 'My Server'}
-                value={newProfileName}
-                onChange={e => setNewProfileName(e.target.value)}
-              />
-            </div>
-
-            {appMode === 'migrate' ? (
-              <>
-                <div className="form-group" style={{ opacity: 0.8 }}>
-                  <label className="form-label">Source</label>
-                  <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
-                    {fqdn || <span style={{ color: 'var(--color-text-secondary)' }}>Not configured</span>}
-                    {connectedServiceOrg && <span style={{ marginLeft: 'var(--space-sm)', color: 'var(--color-text-secondary)' }}>• {connectedServiceOrg.name}</span>}
-                  </div>
-                </div>
-                <div className="form-group" style={{ opacity: 0.8 }}>
-                  <label className="form-label">Destination</label>
-                  <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
-                    {destFqdn || <span style={{ color: 'var(--color-text-secondary)' }}>Not configured</span>}
-                    {destConnectedServiceOrg && <span style={{ marginLeft: 'var(--space-sm)', color: 'var(--color-text-secondary)' }}>• {destConnectedServiceOrg.name}</span>}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="form-group">
-                <label className="form-label">Server FQDN</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="ncentral.example.com"
-                  value={fqdn}
-                  onChange={e => setFqdn(e.target.value)}
-                />
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-              <button
-                className="btn btn-primary"
-                onClick={handleSaveProfile}
-                disabled={!newProfileName || !fqdn || (appMode === 'migrate' && !destFqdn)}
-              >
-                Save Profile
-              </button>
-              <button className="btn btn-ghost" onClick={() => setShowNewProfile(false)}>Cancel</button>
-            </div>
-          </div>
+      {connectionStatus === 'connected' && currentStep !== 'setup' && (
+        <div className="connection-fixed-status">
+          <div className="status-indicator connected" />
+          <span onClick={() => setCurrentStep('setup')}>Connected to {serverUrl}</span>
+          <button
+            className="btn btn-ghost"
+            style={{ padding: '0 4px', marginLeft: 'var(--space-sm)', color: 'var(--color-error)' }}
+            onClick={handleDisconnect}
+          >
+            Disconnect
+          </button>
         </div>
       )}
-    </div >
+
+      {/* New Profile Modal */}
+      {showNewProfile && (
+        <NewProfileModal
+          appMode={appMode}
+          newProfileName={newProfileName}
+          setNewProfileName={setNewProfileName}
+          fqdn={fqdn}
+          setFqdn={setFqdn}
+          destFqdn={destFqdn}
+          connectedServiceOrg={connectedServiceOrg}
+          destConnectedServiceOrg={destConnectedServiceOrg}
+          onSave={handleSaveProfile}
+          onClose={() => setShowNewProfile(false)}
+        />
+      )}
+    </div>
   );
 }
 

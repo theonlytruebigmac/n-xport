@@ -81,17 +81,32 @@ impl AuthManager {
 
     /// Get a valid access token, refreshing if needed
     pub async fn get_token(&self) -> ApiResult<String> {
-        let state = self.state.read().await;
+        // Determine what action to take while holding the read lock,
+        // then release the lock before performing any async work that
+        // needs a write lock (avoids RwLock deadlock).
+        enum Action {
+            ReturnToken(String),
+            Refresh(String),
+            NotAuthenticated,
+            TokenExpired,
+        }
 
-        match &*state {
-            None => Err(ApiError::Authentication("Not authenticated".into())),
-            Some(state) if state.is_refresh_expired() => Err(ApiError::TokenExpired),
-            Some(state) if state.is_access_expired() => {
-                let refresh_token = state.refresh_token.clone();
-                // Lock is released when state goes out of scope
-                self.refresh_token_internal(&refresh_token).await
+        let action = {
+            let state = self.state.read().await;
+            match &*state {
+                None => Action::NotAuthenticated,
+                Some(s) if s.is_refresh_expired() => Action::TokenExpired,
+                Some(s) if s.is_access_expired() => Action::Refresh(s.refresh_token.clone()),
+                Some(s) => Action::ReturnToken(s.access_token.clone()),
             }
-            Some(state) => Ok(state.access_token.clone()),
+            // Read lock dropped here
+        };
+
+        match action {
+            Action::ReturnToken(token) => Ok(token),
+            Action::Refresh(refresh_token) => self.refresh_token_internal(&refresh_token).await,
+            Action::NotAuthenticated => Err(ApiError::Authentication("Not authenticated".into())),
+            Action::TokenExpired => Err(ApiError::TokenExpired),
         }
     }
 

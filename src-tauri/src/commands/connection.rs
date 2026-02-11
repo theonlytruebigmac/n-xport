@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use tauri::State;
 use tokio::sync::Mutex;
 
@@ -15,6 +16,8 @@ pub struct AppState {
     pub dest_client: Arc<Mutex<Option<NcClient>>>,
     /// SOAP client for destination (for operations not available via REST)
     pub dest_soap_client: Arc<Mutex<Option<NcSoapClient>>>,
+    /// Cancellation token for long-running operations
+    pub cancel_token: Arc<AtomicBool>,
 }
 
 impl Default for AppState {
@@ -23,6 +26,7 @@ impl Default for AppState {
             client: Arc::new(Mutex::new(None)),
             dest_client: Arc::new(Mutex::new(None)),
             dest_soap_client: Arc::new(Mutex::new(None)),
+            cancel_token: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -39,17 +43,27 @@ pub struct ConnectionResult {
     pub service_org_name: Option<String>,
 }
 
-/// Test connection to N-Central server
-#[tauri::command]
-pub async fn test_connection(
-    fqdn: String,
-    jwt: String,
-    _username: Option<String>,
-    _password: Option<String>,
-    state: State<'_, AppState>,
-) -> std::result::Result<ConnectionResult, String> {
-    let jwt = jwt.trim().to_string();
-    // ... existing logic (username/password not used for simple REST test yet)
+impl ConnectionResult {
+    /// Create a failure result with just a message
+    pub fn failure(message: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            message: message.into(),
+            server_url: None,
+            server_version: None,
+            service_org_id: None,
+            service_org_name: None,
+        }
+    }
+}
+
+/// Shared connection logic: normalize URL, authenticate, fetch server info & service org.
+/// Returns the connected client and a successful ConnectionResult on success.
+async fn establish_connection(
+    fqdn: &str,
+    jwt: &str,
+) -> std::result::Result<(NcClient, ConnectionResult), ConnectionResult> {
+    let jwt = jwt.trim();
     let base_url = format!(
         "https://{}",
         fqdn.trim_start_matches("https://")
@@ -59,14 +73,12 @@ pub async fn test_connection(
     let client = NcClient::new(&base_url);
 
     // Authenticate
-    if let Err(e) = client.authenticate(&jwt).await {
-        return Ok(ConnectionResult {
+    if let Err(e) = client.authenticate(jwt).await {
+        return Err(ConnectionResult {
             success: false,
             message: format!("Authentication failed: {}", e),
             server_url: Some(base_url),
-            server_version: None,
-            service_org_id: None,
-            service_org_name: None,
+            ..ConnectionResult::failure("")
         });
     }
 
@@ -74,7 +86,6 @@ pub async fn test_connection(
     let version = match client.get_server_info().await {
         Ok(info) => {
             tracing::info!("Server info: {:?}", info);
-            // Prefer fields that likely contain the full version string
             info.ncentral
                 .or(info.product_version)
                 .or(info.ncentral_version)
@@ -94,17 +105,33 @@ pub async fn test_connection(
         _ => (None, None),
     };
 
-    // Store client for later use
-    *state.client.lock().await = Some(client);
-
-    Ok(ConnectionResult {
+    let result = ConnectionResult {
         success: true,
         message: "Connection successful".to_string(),
         server_url: Some(base_url),
         server_version: version,
         service_org_id: so_id,
         service_org_name: so_name,
-    })
+    };
+
+    Ok((client, result))
+}
+
+/// Test connection to N-Central server
+#[tauri::command]
+pub async fn test_connection(
+    fqdn: String,
+    jwt: String,
+    _username: Option<String>,
+    state: State<'_, AppState>,
+) -> std::result::Result<ConnectionResult, String> {
+    match establish_connection(&fqdn, &jwt).await {
+        Ok((client, result)) => {
+            *state.client.lock().await = Some(client);
+            Ok(result)
+        }
+        Err(result) => Ok(result),
+    }
 }
 
 /// Connect using saved credentials
@@ -118,32 +145,11 @@ pub async fn connect_with_profile(
     // Get JWT from keychain
     let jwt = match CredentialStore::get_jwt(&profile_name) {
         Ok(Some(jwt)) => jwt,
-        Ok(None) => {
-            return Ok(ConnectionResult {
-                success: false,
-                message: "No saved credentials for this profile".to_string(),
-                server_url: None,
-                server_version: None,
-                service_org_id: None,
-                service_org_name: None,
-            });
-        }
-        Err(e) => {
-            return Ok(ConnectionResult {
-                success: false,
-                message: format!("Failed to retrieve credentials: {}", e),
-                server_url: None,
-                server_version: None,
-                service_org_id: None,
-                service_org_name: None,
-            });
-        }
+        Ok(None) => return Ok(ConnectionResult::failure("No saved credentials for this profile")),
+        Err(e) => return Ok(ConnectionResult::failure(format!("Failed to retrieve credentials: {}", e))),
     };
 
-    // Get Password from keychain (optional, ignore errors effectively by treating as None)
-    let password = CredentialStore::get_password(&profile_name).unwrap_or(None);
-
-    test_connection(fqdn, jwt, username, password, state).await
+    test_connection(fqdn, jwt, username, state).await
 }
 
 /// Test connection specifically for destination server
@@ -152,68 +158,32 @@ pub async fn connect_destination(
     fqdn: String,
     jwt: String,
     username: Option<String>,
-    _password: Option<String>,
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
-    let jwt = jwt.trim().to_string();
     let base_url = format!(
         "https://{}",
         fqdn.trim_start_matches("https://")
             .trim_start_matches("http://")
     );
 
-    let client = NcClient::new(&base_url);
+    match establish_connection(&fqdn, &jwt).await {
+        Ok((client, mut result)) => {
+            result.message = "Destination connection successful".to_string();
 
-    // Authenticate
-    if let Err(e) = client.authenticate(&jwt).await {
-        return Ok(ConnectionResult {
-            success: false,
-            message: format!("Authentication failed: {}", e),
-            server_url: Some(base_url),
-            server_version: None,
-            service_org_id: None,
-            service_org_name: None,
-        });
+            // Store destination REST client
+            *state.dest_client.lock().await = Some(client);
+
+            // Initialize & store SOAP client for destination
+            let mut soap_client = NcSoapClient::new(&base_url, jwt.trim());
+            if let Some(u) = username {
+                soap_client.set_username(&u);
+            }
+            *state.dest_soap_client.lock().await = Some(soap_client);
+
+            Ok(result)
+        }
+        Err(result) => Ok(result),
     }
-
-    // Get server info
-    let version = match client.get_server_info().await {
-        Ok(info) => info
-            .ncentral
-            .or(info.product_version)
-            .or(info.ncentral_version)
-            .or(info.version)
-            .or(info.build)
-            .or(info.api_version),
-        Err(_) => None,
-    };
-
-    // Get first service org info
-    let (so_id, so_name) = match client.get_service_orgs().await {
-        Ok(orgs) if !orgs.is_empty() => (Some(orgs[0].so_id), Some(orgs[0].so_name.clone())),
-        _ => (None, None),
-    };
-
-    // Store destination client
-    *state.dest_client.lock().await = Some(client);
-
-    // Initialize & store SOAP client for destination
-    // Pass username if available - JWT is used as password
-    let mut soap_client = NcSoapClient::new(&base_url, &jwt);
-    if let Some(u) = username {
-        soap_client.set_username(&u);
-    }
-
-    *state.dest_soap_client.lock().await = Some(soap_client);
-
-    Ok(ConnectionResult {
-        success: true,
-        message: "Destination connection successful".to_string(),
-        server_url: Some(base_url),
-        server_version: version,
-        service_org_id: so_id,
-        service_org_name: so_name,
-    })
 }
 
 /// Save credentials (JWT and optional Password) for a profile

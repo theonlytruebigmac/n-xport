@@ -126,11 +126,17 @@ impl CredentialStore {
 
     /// Store JWT in file (obfuscated)
     fn store_jwt_file(profile_name: &str, jwt: &str) -> Result<()> {
-        tracing::info!("Storing JWT in file fallback for '{}'", profile_name);
+        tracing::warn!(
+            "Storing JWT in FILE FALLBACK for '{}'. \
+             System keychain is unavailable — credentials are stored with \
+             basic obfuscation only. Consider configuring your OS keychain \
+             for secure credential storage.",
+            profile_name
+        );
         let mut creds = load_file_creds();
         creds.insert(profile_name.to_string(), obfuscate(jwt));
         save_file_creds(&creds)?;
-        tracing::info!("JWT stored successfully in file fallback");
+        tracing::warn!("JWT stored in file fallback (not system keychain)");
         Ok(())
     }
 

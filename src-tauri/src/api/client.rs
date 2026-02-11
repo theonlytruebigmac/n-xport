@@ -14,6 +14,9 @@ use super::rate_limiter::RateLimiter;
 use crate::error::{ApiError, ApiResult};
 use crate::models::*;
 
+/// Default page size for paginated API requests
+const DEFAULT_PAGE_SIZE: u32 = 100;
+
 /// N-Central API client
 #[derive(Clone)]
 pub struct NcClient {
@@ -56,10 +59,6 @@ impl NcClient {
         self.auth.authenticate(jwt).await
     }
 
-    /// Check if authenticated
-    pub async fn is_authenticated(&self) -> bool {
-        self.auth.is_authenticated().await
-    }
 
     /// Make a GET request with query parameters
     async fn get_with_query<T, Q>(&self, path: &str, query: &Q) -> ApiResult<T>
@@ -172,6 +171,30 @@ impl NcClient {
                 continue;
             }
 
+            // Handle transient 5xx errors with exponential backoff
+            if matches!(status.as_u16(), 500 | 502 | 503 | 504) {
+                if retries >= self.max_retries {
+                    let message = response.text().await.unwrap_or_default();
+                    return Err(ApiError::Server {
+                        status: status.as_u16(),
+                        message,
+                    });
+                }
+
+                let backoff_secs = 1u64 << retries.min(4); // 1s, 2s, 4s, 8s, 16s max
+                tracing::warn!(
+                    "Server error {} for {}, retrying in {}s (attempt {}/{})",
+                    status.as_u16(),
+                    path,
+                    backoff_secs,
+                    retries + 1,
+                    self.max_retries
+                );
+                sleep(Duration::from_secs(backoff_secs)).await;
+                retries += 1;
+                continue;
+            }
+
             if !status.is_success() {
                 let message = response.text().await.unwrap_or_default();
                 return Err(match status.as_u16() {
@@ -280,43 +303,38 @@ impl NcClient {
         self.get(&endpoints::service_org_by_id(so_id)).await
     }
 
-    /// Get all customers
-    pub async fn get_customers(&self) -> ApiResult<Vec<Customer>> {
-        self.get_all_pages(paths::CUSTOMERS, 100, |_, _| {}).await
-    }
-
     /// Get customers under a service org
     pub async fn get_customers_by_so(&self, so_id: i64) -> ApiResult<Vec<Customer>> {
         let path = endpoints::service_org_customers(so_id);
-        self.get_all_pages(&path, 100, |_, _| {}).await
+        self.get_all_pages(&path, DEFAULT_PAGE_SIZE, |_, _| {}).await
     }
 
     /// Get all sites
     pub async fn get_sites(&self) -> ApiResult<Vec<Site>> {
-        self.get_all_pages(paths::SITES, 100, |_, _| {}).await
+        self.get_all_pages(paths::SITES, DEFAULT_PAGE_SIZE, |_, _| {}).await
     }
 
     /// Get sites under a service org
     pub async fn get_sites_by_so(&self, so_id: i64) -> ApiResult<Vec<Site>> {
         let path = endpoints::service_org_sites(so_id);
-        self.get_all_pages(&path, 100, |_, _| {}).await
+        self.get_all_pages(&path, DEFAULT_PAGE_SIZE, |_, _| {}).await
     }
 
     /// Get all devices
     pub async fn get_devices(&self) -> ApiResult<Vec<Device>> {
-        self.get_all_pages(paths::DEVICES, 100, |_, _| {}).await
+        self.get_all_pages(paths::DEVICES, DEFAULT_PAGE_SIZE, |_, _| {}).await
     }
 
     /// Get users for an org unit
     pub async fn get_users_by_org_unit(&self, org_unit_id: i64) -> ApiResult<Vec<User>> {
         let path = endpoints::org_unit_users(org_unit_id);
-        self.get_all_pages(&path, 100, |_, _| {}).await
+        self.get_all_pages(&path, DEFAULT_PAGE_SIZE, |_, _| {}).await
     }
 
     /// Get devices under an org unit (service org)
     pub async fn get_devices_by_org_unit(&self, org_unit_id: i64) -> ApiResult<Vec<Device>> {
         let path = endpoints::org_unit_devices(org_unit_id);
-        self.get_all_pages(&path, 100, |_, _| {}).await
+        self.get_all_pages(&path, DEFAULT_PAGE_SIZE, |_, _| {}).await
     }
 
     /// Get access groups for an org unit
@@ -345,12 +363,6 @@ impl NcClient {
         let path = endpoints::device_custom_properties(device_id);
         let response: PaginatedResponse<DeviceProperty> = self.get(&path).await?;
         Ok(response.data)
-    }
-
-    /// Get device by ID
-    pub async fn get_device(&self, device_id: i64) -> ApiResult<Device> {
-        let path = endpoints::device_by_id(device_id);
-        self.get(&path).await
     }
 
     /// Get device assets
@@ -410,16 +422,6 @@ impl NcClient {
     ) -> ApiResult<serde_json::Value> {
         let path = endpoints::device_access_groups_create(org_unit_id);
         self.post(&path, group).await
-    }
-
-    /// Create a user
-    pub async fn create_user(
-        &self,
-        org_unit_id: i64,
-        user: &serde_json::Value,
-    ) -> ApiResult<serde_json::Value> {
-        let path = endpoints::org_unit_users(org_unit_id);
-        self.post(&path, user).await
     }
 
     /// Set a custom property value

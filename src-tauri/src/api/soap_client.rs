@@ -110,7 +110,7 @@ impl NcSoapClient {
 
         // Optional fields
         if let Some(ref phone) = info.phone {
-            settings.push(("phone", phone.clone()));
+            settings.push(("telephone", phone.clone()));
         }
         if let Some(ref dept) = info.department {
             settings.push(("department", dept.clone()));
@@ -141,7 +141,7 @@ impl NcSoapClient {
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            settings.push(("accessgroupids", groups_str));
+            settings.push(("accessgroupID", groups_str));
         }
 
         // Enforce password change on next login
@@ -265,57 +265,284 @@ impl NcSoapClient {
         }
         Ok(user_id)
     }
+
+    /// Build a generic SOAP envelope with EiKeyValue settings
+    fn build_key_value_envelope(&self, operation: &str, settings: &[(&str, String)]) -> String {
+        let (api_user, api_pass) = if let Some(u) = &self.username {
+            (u.as_str(), self.jwt.as_str())
+        } else {
+            ("", self.jwt.as_str())
+        };
+
+        let settings_xml: String = settings
+            .iter()
+            .map(|(key, value)| {
+                format!(
+                    r#"<ei2:settings>
+                <ei2:key>{}</ei2:key>
+                <ei2:value>{}</ei2:value>
+            </ei2:settings>"#,
+                    xml_escape(key),
+                    xml_escape(value)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n         ");
+
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" 
+                  xmlns:ei2="http://ei2.nobj.nable.com/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <ei2:{operation}>
+         <ei2:username>{}</ei2:username>
+         <ei2:password>{}</ei2:password>
+         {}
+      </ei2:{operation}>
+   </soapenv:Body>
+</soapenv:Envelope>"#,
+            xml_escape(api_user),
+            xml_escape(api_pass),
+            settings_xml,
+            operation = operation
+        )
+    }
+
+    /// Send a generic SOAP request and return the response body
+    async fn send_soap_request(&self, envelope: &str) -> Result<String, SoapError> {
+        let mut request = self
+            .http_client
+            .post(&self.endpoint_url())
+            .header("Content-Type", "text/xml; charset=utf-8")
+            .header("SOAPAction", "\"\"");
+
+        if self.username.is_none() {
+            request = request.header("Authorization", format!("Bearer {}", self.jwt));
+        }
+
+        let response = request
+            .body(envelope.to_string())
+            .send()
+            .await
+            .map_err(|e| SoapError::HttpError(e.to_string()))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| SoapError::ParseError(e.to_string()))?;
+
+        if !status.is_success() {
+            if let Some(fault) = parse_soap_fault(&body) {
+                return Err(fault);
+            }
+            return Err(SoapError::HttpError(format!(
+                "HTTP {}: {}",
+                status,
+                body.chars().take(200).collect::<String>()
+            )));
+        }
+
+        // Check for SOAP fault even in 200 responses
+        if let Some(fault) = parse_soap_fault(&body) {
+            return Err(fault);
+        }
+
+        Ok(body)
+    }
+
+    /// Add a customer via SOAP API (customerAdd)
+    ///
+    /// Required: customername, parentid
+    /// Returns the new customer ID
+    pub async fn customer_add(
+        &self,
+        customer_name: &str,
+        parent_id: i64,
+        external_id: Option<&str>,
+        contact_first_name: Option<&str>,
+        contact_last_name: Option<&str>,
+        contact_email: Option<&str>,
+    ) -> Result<i64, SoapError> {
+        let mut settings = vec![
+            ("customername", customer_name.to_string()),
+            ("parentid", parent_id.to_string()),
+        ];
+
+        if let Some(ext_id) = external_id {
+            settings.push(("externalid", ext_id.to_string()));
+        }
+        if let Some(fname) = contact_first_name {
+            settings.push(("firstname", fname.to_string()));
+        }
+        if let Some(lname) = contact_last_name {
+            settings.push(("lastname", lname.to_string()));
+        }
+        if let Some(email) = contact_email {
+            settings.push(("email", email.to_string()));
+        }
+
+        let envelope = self.build_key_value_envelope("customerAdd", &settings);
+        tracing::info!("SOAP customerAdd: name='{}', parentId={}", customer_name, parent_id);
+
+        let body = self.send_soap_request(&envelope).await?;
+        parse_return_id(&body, "customerAdd")
+    }
+
+    /// Add an access group via SOAP API (accessGroupAdd)
+    ///
+    /// Required: groupName, groupDescription, groupCustomerID, groupType
+    pub async fn access_group_add(
+        &self,
+        group_name: &str,
+        group_description: &str,
+        customer_id: i64,
+        group_type: &str,
+        auto_include_new: bool,
+    ) -> Result<i64, SoapError> {
+        let settings = vec![
+            ("groupName", group_name.to_string()),
+            ("groupDescription", group_description.to_string()),
+            ("groupCustomerID", customer_id.to_string()),
+            ("groupType", group_type.to_string()),
+            (
+                "autoIncludeNewCustomers",
+                if auto_include_new {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                },
+            ),
+        ];
+
+        let envelope = self.build_key_value_envelope("accessGroupAdd", &settings);
+        tracing::info!(
+            "SOAP accessGroupAdd: name='{}', customerID={}, type={}",
+            group_name, customer_id, group_type
+        );
+
+        let body = self.send_soap_request(&envelope).await?;
+        parse_return_id(&body, "accessGroupAdd")
+    }
+
+    /// Add a user role via SOAP API (userRoleAdd)
+    ///
+    /// Required: roleName, roleDescription, customerID, permissionID
+    pub async fn user_role_add(
+        &self,
+        role_name: &str,
+        role_description: &str,
+        customer_id: i64,
+        permission_ids: &[i64],
+    ) -> Result<i64, SoapError> {
+        let mut settings = vec![
+            ("roleName", role_name.to_string()),
+            ("roleDescription", role_description.to_string()),
+            ("customerID", customer_id.to_string()),
+        ];
+
+        for pid in permission_ids {
+            settings.push(("permissionID", pid.to_string()));
+        }
+
+        let envelope = self.build_key_value_envelope("userRoleAdd", &settings);
+        tracing::info!(
+            "SOAP userRoleAdd: name='{}', customerID={}, {} permissions",
+            role_name, customer_id, permission_ids.len()
+        );
+
+        let body = self.send_soap_request(&envelope).await?;
+        parse_return_id(&body, "userRoleAdd")
+    }
+
+    /// Modify organization properties via SOAP API (organizationPropertyModify)
+    ///
+    /// Sets the value of a custom property on an org unit.
+    pub async fn organization_property_modify(
+        &self,
+        customer_id: i64,
+        property_id: i64,
+        value: &str,
+    ) -> Result<(), SoapError> {
+        let (api_user, api_pass) = if let Some(u) = &self.username {
+            (u.as_str(), self.jwt.as_str())
+        } else {
+            ("", self.jwt.as_str())
+        };
+
+        // organizationPropertyModify uses a different envelope structure
+        // with OrganizationProperties object instead of EiKeyValue settings
+        let envelope = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" 
+                  xmlns:ei2="http://ei2.nobj.nable.com/">
+   <soapenv:Header/>
+   <soapenv:Body>
+      <ei2:organizationPropertyModify>
+         <ei2:username>{}</ei2:username>
+         <ei2:password>{}</ei2:password>
+         <ei2:organizationProperties>
+            <ei2:customerId>{}</ei2:customerId>
+            <ei2:properties>
+               <ei2:propertyId>{}</ei2:propertyId>
+               <ei2:value>{}</ei2:value>
+            </ei2:properties>
+         </ei2:organizationProperties>
+      </ei2:organizationPropertyModify>
+   </soapenv:Body>
+</soapenv:Envelope>"#,
+            xml_escape(api_user),
+            xml_escape(api_pass),
+            customer_id,
+            property_id,
+            xml_escape(value)
+        );
+
+        tracing::info!(
+            "SOAP organizationPropertyModify: customerId={}, propertyId={}, value='{}'",
+            customer_id, property_id, value
+        );
+
+        self.send_soap_request(&envelope).await?;
+        Ok(())
+    }
 }
 
 /// Generate a strong password meeting N-Central requirements
 /// Requirements: At least 8 characters, 1 number, 1 uppercase, 1 lowercase, 1 special
 fn generate_strong_password() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use rand::Rng;
 
     // Character sets
-    let upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    let lower = "abcdefghijklmnopqrstuvwxyz";
-    let numbers = "0123456789";
-    let special = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+    let upper: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let lower: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
+    let numbers: &[u8] = b"0123456789";
+    let special: &[u8] = b"!@#$%^&*()_+-=[]{}|;:,.<>?";
 
-    // Simple pseudo-random generator using time
-    let mut seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let mut rng = rand::thread_rng();
 
-    // Linear Congruential Generator parameters (from Numerical Recipes)
-    let a: u128 = 1664525;
-    let c: u128 = 1013904223;
-    let m: u128 = 2u128.pow(32);
-
-    let mut next_rand = || {
-        seed = (a.wrapping_mul(seed).wrapping_add(c)) % m;
-        seed as usize
-    };
-
-    let mut password = String::new();
+    let mut password = Vec::with_capacity(12);
 
     // Ensure one of each required type
-    password.push(upper.as_bytes()[next_rand() % upper.len()] as char);
-    password.push(lower.as_bytes()[next_rand() % lower.len()] as char);
-    password.push(numbers.as_bytes()[next_rand() % numbers.len()] as char);
-    password.push(special.as_bytes()[next_rand() % special.len()] as char);
+    password.push(upper[rng.gen_range(0..upper.len())]);
+    password.push(lower[rng.gen_range(0..lower.len())]);
+    password.push(numbers[rng.gen_range(0..numbers.len())]);
+    password.push(special[rng.gen_range(0..special.len())]);
 
-    // Fill remaining 8 chars (total 12)
-    let all_chars = format!("{}{}{}{}", upper, lower, numbers, special);
+    // Fill remaining 8 chars (total 12) from all character sets
+    let all_chars: Vec<u8> = [upper, lower, numbers, special].concat();
     for _ in 0..8 {
-        password.push(all_chars.as_bytes()[next_rand() % all_chars.len()] as char);
+        password.push(all_chars[rng.gen_range(0..all_chars.len())]);
     }
 
-    // Shuffle the password loosely (swap random positions)
-    let mut pwd_chars: Vec<char> = password.chars().collect();
-    for i in 0..pwd_chars.len() {
-        let j = next_rand() % pwd_chars.len();
-        pwd_chars.swap(i, j);
+    // Fisher-Yates shuffle for uniform randomness
+    for i in (1..password.len()).rev() {
+        let j = rng.gen_range(0..=i);
+        password.swap(i, j);
     }
 
-    pwd_chars.into_iter().collect()
+    String::from_utf8(password).expect("Password contains only ASCII characters")
 }
 
 /// Escape special XML characters
@@ -362,6 +589,27 @@ fn parse_user_add_response(body: &str) -> Result<i64, SoapError> {
             ))
         }
     }
+}
+
+/// Parse a generic SOAP response for a return ID
+fn parse_return_id(body: &str, operation: &str) -> Result<i64, SoapError> {
+    // Try <return>ID</return> first
+    if let Some(id_str) = extract_xml_value(body, "return") {
+        return id_str.parse::<i64>().map_err(|e| {
+            SoapError::ParseError(format!("Failed to parse {} return ID: {}", operation, e))
+        });
+    }
+    // Try <operationReturn>ID</operationReturn>
+    let alt_tag = format!("{}Return", operation);
+    if let Some(id_str) = extract_xml_value(body, &alt_tag) {
+        return id_str.parse::<i64>().map_err(|e| {
+            SoapError::ParseError(format!("Failed to parse {} return ID: {}", operation, e))
+        });
+    }
+    Err(SoapError::ParseError(format!(
+        "Could not find return ID in {} response",
+        operation
+    )))
 }
 
 /// Simple XML value extraction (avoids full XML parser dependency)
