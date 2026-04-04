@@ -4,9 +4,13 @@
 //! that are not available via REST API (e.g., userAdd).
 
 use reqwest::Client;
+use std::time::Duration;
 
 /// SOAP API endpoint path
 const SOAP_ENDPOINT: &str = "/dms2/services2/ServerEI2";
+
+/// Timeout for SOAP requests (seconds)
+const SOAP_TIMEOUT_SECS: u64 = 120;
 
 /// Error type for SOAP operations
 #[derive(Debug)]
@@ -65,8 +69,13 @@ pub struct NcSoapClient {
 impl NcSoapClient {
     /// Create a new SOAP client
     pub fn new(base_url: &str, jwt: &str) -> Self {
+        let http_client = Client::builder()
+            .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
+            .connect_timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
-            http_client: Client::new(),
+            http_client,
             base_url: base_url.trim_end_matches('/').to_string(),
             jwt: jwt.to_string(),
             username: None,

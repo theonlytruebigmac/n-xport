@@ -18,6 +18,9 @@ pub struct OrgProperty {
     pub property_type: Option<String>,
     #[serde(default)]
     pub org_unit_id: Option<i64>,
+    /// Extra fields from API response
+    #[serde(default, rename = "_extra")]
+    pub extra: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 /// Device custom property from /api/devices/{id}/custom-properties
@@ -38,4 +41,7 @@ pub struct DeviceProperty {
     pub default_value: Option<String>,
     #[serde(default)]
     pub property_type: Option<String>,
+    /// Extra fields from API response
+    #[serde(default, rename = "_extra")]
+    pub extra: Option<std::collections::HashMap<String, serde_json::Value>>,
 }

@@ -1,6 +1,24 @@
 use crate::models::common::{option_string_or_i64, serialize_vec_to_string, string_or_i64};
 use serde::{Deserialize, Serialize};
 
+/// Extra fields from user API response (`_extra` object).
+/// N-Central returns additional user details here (phone, department, etc.).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserExtra {
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub department: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Catch-all for any other fields
+    #[serde(flatten)]
+    pub other: std::collections::HashMap<String, serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
@@ -34,4 +52,7 @@ pub struct User {
     pub org_unit_id: Option<i64>,
     #[serde(default, deserialize_with = "option_string_or_i64")]
     pub service_org_id: Option<i64>,
+    /// Extra fields containing phone, department, location, etc.
+    #[serde(default, rename = "_extra")]
+    pub extra: Option<UserExtra>,
 }

@@ -52,6 +52,9 @@ pub struct Customer {
     pub is_system: Option<bool>,
     #[serde(default)]
     pub is_service_org: Option<bool>,
+    /// Extra fields from API response
+    #[serde(default, rename = "_extra")]
+    pub extra: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 /// Site from /api/sites
@@ -115,4 +118,7 @@ pub struct Site {
     pub service_org_id: Option<i64>,
     #[serde(default, deserialize_with = "option_string_or_i64")]
     pub service_orgid: Option<i64>,
+    /// Extra fields from API response
+    #[serde(default, rename = "_extra")]
+    pub extra: Option<std::collections::HashMap<String, serde_json::Value>>,
 }

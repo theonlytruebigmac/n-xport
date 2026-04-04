@@ -25,16 +25,19 @@ pub struct IdMapping {
     pub customers: HashMap<i64, i64>,
     /// Source Site ID -> Destination Site ID
     pub sites: HashMap<i64, i64>,
-    /// Source Role ID -> Destination Role ID (legacy, kept for reference)
+    /// Source Role ID -> Destination Role ID
     pub roles: HashMap<i64, i64>,
     /// Source Access Group ID -> Destination Access Group ID
     pub access_groups: HashMap<i64, i64>,
-    /// Role Name (lowercase) -> Destination Role ID (for user creation)
+    /// Role Name (lowercase) -> Destination Role ID (fallback for user creation)
     pub role_names: HashMap<String, i64>,
-    /// User Login Name (lowercase) -> Destination User ID (for access group creation)
+    /// User Login Name (lowercase) -> Destination User ID
     pub user_logins: HashMap<String, i64>,
     /// Source Org Unit ID -> Destination Org Unit ID (SO, Customer, or Site)
     pub org_units: HashMap<i64, i64>,
+    /// Source Access Group ID -> list of Destination User IDs that should be members.
+    /// Built during user migration from each source user's access_group_ids field.
+    pub access_group_members: HashMap<i64, Vec<i64>>,
 }
 
 impl IdMapping {
@@ -47,6 +50,7 @@ impl IdMapping {
             role_names: HashMap::new(),
             user_logins: HashMap::new(),
             org_units: HashMap::new(),
+            access_group_members: HashMap::new(),
         }
     }
 }
@@ -151,8 +155,11 @@ async fn migrate_customers_and_sites(
 
                     match dest.create_customer(dest_so_id, &payload).await {
                         Ok(resp) => {
-                            let id = resp["customerId"]
+                            let data = if resp.get("data").is_some() { &resp["data"] } else { &resp };
+                            let id = data["customerId"]
                                 .as_i64()
+                                .or_else(|| data["id"].as_i64())
+                                .or_else(|| resp["customerId"].as_i64())
                                 .or_else(|| resp["id"].as_i64())
                                 .unwrap_or(0);
                             let msg = format!(
@@ -267,12 +274,12 @@ async fn migrate_customers_and_sites(
                 if let Some(&dest_site_id) = dest_site_lookup.get(&key) {
                     mapping.sites.insert(source_site.site_id, dest_site_id);
                     mapping.org_units.insert(source_site.site_id, dest_site_id);
-                    tracing::debug!(
-                        "Site '{}' under customer '{}' mapped to dest ID {}",
-                        source_site.site_name,
-                        src_cust_name,
-                        dest_site_id
+                    let msg = format!(
+                        "Site '{}' under '{}' already exists on destination (ID: {})",
+                        source_site.site_name, src_cust_name, dest_site_id
                     );
+                    tracing::debug!("{}", msg);
+                    emit_log(app_handle, "debug", &msg);
                 } else if let Some(&dest_cust_id) = mapping.customers.get(&src_parent_id) {
                     let msg = format!(
                         "Creating site '{}' under customer '{}' (dest customer ID: {})...",
@@ -298,8 +305,11 @@ async fn migrate_customers_and_sites(
 
                     match dest.create_site(dest_cust_id, &payload).await {
                         Ok(resp) => {
-                            let id = resp["siteId"]
+                            let data = if resp.get("data").is_some() { &resp["data"] } else { &resp };
+                            let id = data["siteId"]
                                 .as_i64()
+                                .or_else(|| data["id"].as_i64())
+                                .or_else(|| resp["siteId"].as_i64())
                                 .or_else(|| resp["id"].as_i64())
                                 .unwrap_or(0);
                             if id != 0 {
@@ -347,13 +357,13 @@ async fn migrate_customers_and_sites(
     Ok(())
 }
 
-/// Migrate user roles from source to destination.
+/// Migrate user roles from source to destination across all org unit levels.
 /// Populates `mapping.roles` and `mapping.role_names`.
 async fn migrate_user_roles(
     source: &NcClient,
     dest: &NcClient,
     source_so_id: i64,
-    dest_so_id: i64,
+    _dest_so_id: i64,
     mapping: &mut IdMapping,
     soap_client: Option<&NcSoapClient>,
     app_handle: &AppHandle,
@@ -365,116 +375,244 @@ async fn migrate_user_roles(
 
     if perm_lookup.is_empty() {
         tracing::warn!("No permission mappings loaded from CSV - roles will be created with minimal permissions");
+        emit_log(app_handle, "warning", "No permission mappings loaded — roles will have minimal permissions");
     }
 
-    report_progress(app_handle, "Roles", "Fetching source roles...", 30.0);
-    let source_roles = source
-        .get_user_roles(source_so_id)
-        .await
-        .map_err(|e| format!("Failed to fetch source roles: {}", e))?;
-
-    report_progress(app_handle, "Roles", "Fetching destination roles...", 35.0);
-    let dest_roles = dest
-        .get_user_roles(dest_so_id)
-        .await
-        .map_err(|e| format!("Failed to fetch destination roles: {}", e))?;
-
-    let mut dest_name_map = HashMap::new();
-    for r in &dest_roles {
-        if let Some(ref name) = r.role_name {
-            dest_name_map.insert(name.to_lowercase(), r.role_id);
-        }
+    // Build ordered org unit pairs: SO first, then customers, then sites.
+    // This ensures parent-level roles are processed before children, so inherited
+    // roles (which N-central returns at every child OU) are recognized as duplicates.
+    let mut org_unit_pairs: Vec<(i64, i64)> = Vec::new();
+    // SO first
+    if let Some(&dest_so) = mapping.org_units.get(&source_so_id) {
+        org_unit_pairs.push((source_so_id, dest_so));
     }
+    // Then customers
+    for (&src, &dst) in &mapping.customers {
+        org_unit_pairs.push((src, dst));
+    }
+    // Then sites
+    for (&src, &dst) in &mapping.sites {
+        org_unit_pairs.push((src, dst));
+    }
+    let total_ous = org_unit_pairs.len();
 
-    for source_role in source_roles {
-        let role_name = source_role.role_name.as_deref().unwrap_or("Unknown Role");
-        if let Some(&id) = dest_name_map.get(&role_name.to_lowercase()) {
-            mapping.roles.insert(source_role.role_id, id);
-            mapping.role_names.insert(role_name.to_lowercase(), id);
-            tracing::debug!(
-                "Role '{}' already exists in destination (ID: {})",
-                role_name,
-                id
-            );
+    emit_log(
+        app_handle,
+        "info",
+        &format!("Roles: Scanning {} org units for roles...", total_ous),
+    );
+
+    for (idx, &(src_ou, dest_ou)) in org_unit_pairs.iter().enumerate() {
+        let progress = 28.0 + (idx as f32 / total_ous as f32) * 12.0;
+        let ou_label = if src_ou == source_so_id {
+            "Service Org".to_string()
+        } else if mapping.customers.contains_key(&src_ou) {
+            format!("Customer {}", src_ou)
         } else {
-            let source_permissions = source_role.get_permissions();
-            let permission_ids: Vec<i64> =
-                if !perm_lookup.is_empty() && !source_permissions.is_empty() {
-                    perm_lookup.names_to_ids(&source_permissions)
-                } else {
-                    vec![1701] // Fallback: ACTIVE_ISSUES_VIEW
-                };
+            format!("Site {}", src_ou)
+        };
 
-            let description = source_role
-                .role_description
-                .as_deref()
-                .unwrap_or("Migrated role");
+        report_progress(
+            app_handle,
+            "Roles",
+            &format!("Fetching roles from {} ...", ou_label),
+            progress,
+        );
 
-            let payload = serde_json::json!({
-                "roleName": role_name,
-                "description": description,
-                "permissionIds": permission_ids,
-                "userIds": []
-            });
+        let source_roles = source.get_user_roles(src_ou).await.unwrap_or_default();
+        if source_roles.is_empty() {
+            continue;
+        }
 
-            tracing::info!(
-                "Creating role '{}' with {} permissions...",
-                role_name,
-                permission_ids.len()
-            );
+        let dest_roles = dest.get_user_roles(dest_ou).await.unwrap_or_default();
+        let mut dest_name_map: HashMap<String, i64> = HashMap::new();
+        for r in &dest_roles {
+            if let Some(ref name) = r.role_name {
+                dest_name_map.insert(name.to_lowercase(), r.role_id);
+            }
+        }
 
-            match dest.create_user_role(dest_so_id, &payload).await {
-                Ok(resp) => {
-                    tracing::info!("Role creation response: {:?}", resp);
-                    let id = resp["roleId"]
-                        .as_i64()
-                        .or_else(|| resp["id"].as_i64())
-                        .unwrap_or(0);
-                    if id != 0 {
-                        mapping.roles.insert(source_role.role_id, id);
-                        mapping.role_names.insert(role_name.to_lowercase(), id);
-                        tracing::info!(
-                            "Created role '{}' (source ID: {} → dest ID: {}) with {} permissions",
-                            role_name,
-                            source_role.role_id,
-                            id,
-                            permission_ids.len()
-                        );
+        for source_role in source_roles {
+            let role_name = source_role.role_name.as_deref().unwrap_or("Unknown Role");
+            let role_name_lower = role_name.to_lowercase();
+
+            // Check if this role already exists (or is inherited) at the destination OU.
+            // We rely on dest_name_map (fetched per-OU) rather than the global mapping.role_names,
+            // because same-named roles at sibling OUs (e.g., "Demo - Customer Manager" at two
+            // different customers) are distinct roles, not inherited duplicates.
+            if let Some(&id) = dest_name_map.get(&role_name_lower) {
+                mapping.roles.insert(source_role.role_id, id);
+                mapping.role_names.insert(role_name_lower, id);
+                let msg = format!(
+                    "Role '{}' already exists at dest {} (ID: {})",
+                    role_name, ou_label, id
+                );
+                tracing::debug!("{}", msg);
+                emit_log(app_handle, "debug", &msg);
+            } else {
+                let source_permissions = source_role.get_permissions();
+                let mut permission_ids: Vec<i64> =
+                    if !perm_lookup.is_empty() && !source_permissions.is_empty() {
+                        perm_lookup.names_to_ids(&source_permissions)
                     } else {
-                        tracing::warn!(
-                            "Role '{}' created but no ID returned in response",
-                            role_name
-                        );
-                    }
+                        vec![]
+                    };
+                // N-central requires at least one permission to create a role.
+                // If we couldn't resolve any from the source, use a minimal fallback
+                // so the role still exists for user assignment.
+                if permission_ids.is_empty() {
+                    permission_ids = vec![1701]; // ACTIVE_ISSUES_VIEW
+                    emit_log(
+                        app_handle,
+                        "debug",
+                        &format!(
+                            "Role '{}' at {} — permissions not available from source API, using minimal fallback",
+                            role_name, ou_label
+                        ),
+                    );
                 }
-                Err(rest_err) => {
-                    // REST failed — try SOAP fallback
-                    tracing::warn!("REST create_user_role failed for '{}': {}. Trying SOAP...", role_name, rest_err);
+
+                let description = source_role
+                    .role_description
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Migrated role");
+
+                let payload = serde_json::json!({
+                    "roleName": role_name,
+                    "description": description,
+                    "permissionIds": permission_ids,
+                    "userIds": []
+                });
+
+                tracing::info!(
+                    "Creating role '{}' at {} with {} permissions...",
+                    role_name, ou_label, permission_ids.len()
+                );
+
+                // For customer/site-level roles, prefer SOAP userRoleAdd which respects the
+                // customerID parameter for OU-level placement. The REST API always creates
+                // roles at the SO level regardless of the orgUnitId in the URL.
+                let is_so_level = src_ou == source_so_id;
+                let mut created = false;
+
+                if !is_so_level {
+                    // Try SOAP first for non-SO roles (ensures the role exists on the server).
+                    // Do NOT store the SOAP-returned ID in mapping.roles — both SOAP and REST
+                    // return a global/SO-level ID, not the per-OU inherited view ID that
+                    // N-central requires for user role assignment. The re-fetch after this
+                    // loop will find the correct per-OU ID.
                     if let Some(soap) = soap_client {
-                        match soap.user_role_add(role_name, description, dest_so_id, &permission_ids).await {
-                            Ok(id) => {
-                                if id != 0 {
-                                    mapping.roles.insert(source_role.role_id, id);
-                                    mapping.role_names.insert(role_name.to_lowercase(), id);
-                                    tracing::info!("Created role '{}' via SOAP (ID: {})", role_name, id);
-                                }
+                        match soap.user_role_add(role_name, description, dest_ou, &permission_ids).await {
+                            Ok(id) if id > 0 => {
+                                let msg = format!("Created role '{}' at {} via SOAP (ID: {}), re-fetch will resolve per-OU ID", role_name, ou_label, id);
+                                tracing::info!("{}", msg);
+                                emit_log(app_handle, "success", &msg);
+                                created = true;
                             }
-                            Err(soap_err) => {
-                                tracing::error!("Failed to create role '{}' (REST: {}, SOAP: {})", role_name, rest_err, soap_err);
+                            Ok(_) => {
+                                emit_log(app_handle, "debug", &format!(
+                                    "SOAP userRoleAdd '{}' at {} returned non-positive ID, will try REST + re-fetch",
+                                    role_name, ou_label
+                                ));
+                            }
+                            Err(e) => {
+                                emit_log(app_handle, "debug", &format!(
+                                    "SOAP userRoleAdd '{}' at {} failed: {}, will try REST + re-fetch",
+                                    role_name, ou_label, e
+                                ));
                             }
                         }
-                    } else {
-                        tracing::error!("Failed to create role '{}': {}", role_name, rest_err);
+                    }
+                }
+
+                if !created {
+                    // REST fallback (works well for SO-level roles; for others, re-fetch picks up the ID)
+                    match dest.create_user_role(dest_ou, &payload).await {
+                        Ok(resp) => {
+                            let data = if resp.get("data").is_some() { &resp["data"] } else { &resp };
+                            let id = data["roleId"]
+                                .as_i64()
+                                .or_else(|| data["userRoleId"].as_i64())
+                                .or_else(|| data["id"].as_i64())
+                                .or_else(|| resp["roleId"].as_i64())
+                                .or_else(|| resp["id"].as_i64())
+                                .unwrap_or(0);
+                            if id > 0 && is_so_level {
+                                // Only trust REST IDs for SO-level roles (REST always creates at SO)
+                                mapping.roles.insert(source_role.role_id, id);
+                                mapping.role_names.insert(role_name_lower.clone(), id);
+                                let msg = format!(
+                                    "Created role '{}' at {} (ID: {}, {} permissions)",
+                                    role_name, ou_label, id, permission_ids.len()
+                                );
+                                tracing::info!("{}", msg);
+                                emit_log(app_handle, "success", &msg);
+                                let _ = created; // suppress unused warning
+                            } else {
+                                emit_log(app_handle, "debug", &format!(
+                                    "REST created role '{}' at {} (resp ID: {}), will verify via re-fetch",
+                                    role_name, ou_label, id
+                                ));
+                            }
+                        }
+                        Err(rest_err) => {
+                            emit_log(app_handle, "debug", &format!(
+                                "REST create_user_role '{}' at {} failed: {}",
+                                role_name, ou_label, rest_err
+                            ));
+                        }
                     }
                 }
             }
         }
+
+        // Safety net: re-fetch dest roles to pick up any that were created but whose
+        // IDs weren't captured from the create response. Match source roles by name.
+        let refreshed_dest_roles = dest.get_user_roles(dest_ou).await.unwrap_or_default();
+        let mut refreshed_name_map: HashMap<String, i64> = HashMap::new();
+        for r in &refreshed_dest_roles {
+            if let Some(ref name) = r.role_name {
+                refreshed_name_map.insert(name.to_lowercase(), r.role_id);
+            }
+        }
+
+        // Re-fetch source roles to fill in any mapping gaps
+        let source_roles_refetch = source.get_user_roles(src_ou).await.unwrap_or_default();
+        for source_role in &source_roles_refetch {
+            if mapping.roles.contains_key(&source_role.role_id) {
+                continue; // Already mapped
+            }
+            let role_name = source_role.role_name.as_deref().unwrap_or("");
+            if let Some(&dest_id) = refreshed_name_map.get(&role_name.to_lowercase()) {
+                mapping.roles.insert(source_role.role_id, dest_id);
+                mapping.role_names.insert(role_name.to_lowercase(), dest_id);
+                emit_log(
+                    app_handle,
+                    "debug",
+                    &format!(
+                        "Role '{}' at {} mapped via re-fetch (src {} → dest {})",
+                        role_name, ou_label, source_role.role_id, dest_id
+                    ),
+                );
+            }
+        }
     }
+
+    emit_log(
+        app_handle,
+        "info",
+        &format!(
+            "Roles: {} total role mappings across {} org units",
+            mapping.roles.len(),
+            total_ous
+        ),
+    );
 
     Ok(())
 }
 
-/// Migrate access groups from source to destination.
+/// Migrate access groups from source to destination across all org unit levels.
 /// Populates `mapping.access_groups`.
 async fn migrate_access_groups(
     source: &NcClient,
@@ -485,180 +623,258 @@ async fn migrate_access_groups(
     soap_client: Option<&NcSoapClient>,
     app_handle: &AppHandle,
 ) -> Result<(), String> {
-    report_progress(app_handle, "Access Groups", "Fetching source access groups...", 50.0);
-    let source_groups = source
-        .get_access_groups(source_so_id)
-        .await
-        .map_err(|e| format!("Failed to fetch source groups: {}", e))?;
-
-    report_progress(app_handle, "Access Groups", "Fetching destination access groups...", 55.0);
-    let dest_groups = dest
-        .get_access_groups(dest_so_id)
-        .await
-        .map_err(|e| format!("Failed to fetch destination groups: {}", e))?;
-
-    report_progress(app_handle, "Access Groups", "Fetching destination customer IDs...", 58.0);
-    let dest_customers = dest
-        .get_customers_by_so(dest_so_id)
-        .await
-        .unwrap_or_default();
-    let dest_customer_ids: Vec<String> = dest_customers
-        .iter()
-        .map(|c| c.customer_id.to_string())
+    // Collect all dest org unit IDs (customers + sites) for SO-level access group scope
+    let all_dest_ou_ids: Vec<String> = mapping
+        .org_units
+        .values()
+        .filter(|&&v| v != dest_so_id)
+        .map(|v| v.to_string())
         .collect();
 
-    report_progress(app_handle, "Access Groups", "Fetching destination user IDs...", 59.0);
-    let dest_users = dest
-        .get_users_by_org_unit(dest_so_id)
-        .await
-        .unwrap_or_default();
-    let dest_user_ids: Vec<String> = dest_users.iter().map(|u| u.user_id.to_string()).collect();
+    // Build ordered org unit pairs: SO first, then customers, then sites.
+    // This ensures parent-level groups are processed before children, so inherited
+    // groups (which N-central returns at every child OU) are recognized as duplicates.
+    let mut org_unit_pairs: Vec<(i64, i64)> = Vec::new();
+    if let Some(&dest_so) = mapping.org_units.get(&source_so_id) {
+        org_unit_pairs.push((source_so_id, dest_so));
+    }
+    for (&src, &dst) in &mapping.customers {
+        org_unit_pairs.push((src, dst));
+    }
+    for (&src, &dst) in &mapping.sites {
+        org_unit_pairs.push((src, dst));
+    }
+    let total_ous = org_unit_pairs.len();
 
-    tracing::info!(
-        "Found {} destination customers and {} users for access group creation",
-        dest_customer_ids.len(),
-        dest_user_ids.len()
+    emit_log(
+        app_handle,
+        "info",
+        &format!(
+            "Access Groups: Scanning {} org units for access groups...",
+            total_ous
+        ),
     );
 
-    let mut dest_name_map = HashMap::new();
-    for g in &dest_groups {
-        if let Some(ref name) = g.group_name {
-            dest_name_map.insert(name.to_lowercase(), g.group_id);
-        }
-    }
-
-    for source_group in source_groups {
-        let group_name = source_group
-            .group_name
-            .as_deref()
-            .unwrap_or("Unknown Group");
-        if let Some(&id) = dest_name_map.get(&group_name.to_lowercase()) {
-            mapping.access_groups.insert(source_group.group_id, id);
-            tracing::debug!(
-                "Access group '{}' already exists in destination (ID: {})",
-                group_name,
-                id
-            );
+    for (idx, &(src_ou, dest_ou)) in org_unit_pairs.iter().enumerate() {
+        let progress = 50.0 + (idx as f32 / total_ous as f32) * 15.0;
+        let ou_label = if src_ou == source_so_id {
+            "Service Org".to_string()
+        } else if mapping.customers.contains_key(&src_ou) {
+            format!("Customer {}", src_ou)
         } else {
-            let group_type = source_group.group_type.as_deref().unwrap_or("ORG_UNIT");
-            let description = source_group.group_description.as_deref().unwrap_or("");
+            format!("Site {}", src_ou)
+        };
 
-            if dest_customer_ids.is_empty() {
-                tracing::warn!(
-                    "Cannot create access group '{}': No customers exist in destination.",
-                    group_name
-                );
-                continue;
+        report_progress(
+            app_handle,
+            "Access Groups",
+            &format!("Fetching access groups from {} ...", ou_label),
+            progress,
+        );
+
+        let source_groups = source.get_access_groups(src_ou).await.unwrap_or_default();
+        if source_groups.is_empty() {
+            continue;
+        }
+
+        let dest_groups = dest.get_access_groups(dest_ou).await.unwrap_or_default();
+        let mut dest_name_map: HashMap<String, i64> = HashMap::new();
+        for g in &dest_groups {
+            if let Some(ref name) = g.group_name {
+                dest_name_map.insert(name.to_lowercase(), g.group_id);
             }
+        }
 
-            tracing::info!(
-                "Access group '{}' - using {} customer IDs: {:?}",
-                group_name,
-                dest_customer_ids.len(),
-                &dest_customer_ids[..std::cmp::min(3, dest_customer_ids.len())]
-            );
+        // Determine orgUnitIds scope: SO-level groups get all customers/sites,
+        // others get just their own OU
+        let scope_ou_ids = if src_ou == source_so_id {
+            all_dest_ou_ids.clone()
+        } else {
+            vec![dest_ou.to_string()]
+        };
 
-            let payload = serde_json::json!({
-                "groupName": group_name,
-                "groupDescription": description,
-                "orgUnitIds": dest_customer_ids,
-                "userIds": dest_user_ids,
-                "autoIncludeNewOrgUnits": "true"
-            });
+        for source_group in source_groups {
+            let group_name = source_group
+                .group_name
+                .as_deref()
+                .unwrap_or("Unknown Group");
+            let group_name_lower = group_name.to_lowercase();
 
-            tracing::info!(
-                "Creating access group '{}' (type: {}) with {} org units and {} users...",
-                group_name,
-                group_type,
-                dest_customer_ids.len(),
-                dest_user_ids.len()
-            );
-            tracing::debug!(
-                "Payload: {}",
-                serde_json::to_string_pretty(&payload).unwrap_or_default()
-            );
+            // Use source user→access group membership data to determine which dest
+            // users should be in this group (replicating the source exactly).
+            let member_user_ids: Vec<String> = mapping
+                .access_group_members
+                .get(&source_group.group_id)
+                .map(|ids| ids.iter().map(|id| id.to_string()).collect())
+                .unwrap_or_default();
 
-            let result = if group_type == "DEVICE" {
-                dest.create_device_access_group(dest_so_id, &payload).await
+            // Check if group already exists at this dest OU (including inherited groups).
+            // Like roles, we use dest_name_map per-OU rather than global dedup,
+            // because same-named groups at sibling OUs are distinct.
+            if let Some(&id) = dest_name_map.get(&group_name_lower) {
+                mapping.access_groups.insert(source_group.group_id, id);
+                let msg = format!(
+                    "Access group '{}' already exists at dest {} (ID: {})",
+                    group_name, ou_label, id
+                );
+                tracing::debug!("{}", msg);
+                emit_log(app_handle, "debug", &msg);
             } else {
-                dest.create_org_unit_access_group(dest_so_id, &payload).await
-            };
+                let group_type = source_group.group_type.as_deref().unwrap_or("ORG_UNIT");
+                let description = source_group.group_description.as_deref().unwrap_or("");
 
-            match result {
-                Ok(resp) => {
-                    let id = resp["groupId"]
-                        .as_i64()
-                        .or_else(|| resp["id"].as_i64())
-                        .unwrap_or(0);
-                    if id != 0 {
-                        mapping.access_groups.insert(source_group.group_id, id);
-                        tracing::info!("Created access group '{}' (ID: {})", group_name, id);
+                // Use source _extra data for orgUnitIds and autoInclude when available,
+                // otherwise fall back to computed scope
+                let source_ou_ids = source_group.get_org_unit_ids();
+                let effective_ou_ids: Vec<String> = if !source_ou_ids.is_empty() {
+                    // Map source org unit IDs to destination IDs
+                    source_ou_ids
+                        .iter()
+                        .filter_map(|&src_id| mapping.org_units.get(&src_id).map(|d| d.to_string()))
+                        .collect()
+                } else {
+                    scope_ou_ids.clone()
+                };
+
+                let auto_include = source_group
+                    .get_auto_include()
+                    .unwrap_or_else(|| "true".to_string());
+
+                let payload = serde_json::json!({
+                    "groupName": group_name,
+                    "groupDescription": description,
+                    "orgUnitIds": effective_ou_ids,
+                    "userIds": member_user_ids,
+                    "autoIncludeNewOrgUnits": auto_include
+                });
+
+                tracing::info!(
+                    "Creating access group '{}' at {} (type: {}) with {} org units and {} users...",
+                    group_name, ou_label, group_type, effective_ou_ids.len(), member_user_ids.len()
+                );
+
+                let result = if group_type == "DEVICE" {
+                    dest.create_device_access_group(dest_ou, &payload).await
+                } else {
+                    dest.create_org_unit_access_group(dest_ou, &payload).await
+                };
+
+                match result {
+                    Ok(resp) => {
+                        let data = if resp.get("data").is_some() { &resp["data"] } else { &resp };
+                        let id = data["groupId"]
+                            .as_i64()
+                            .or_else(|| data["accessGroupId"].as_i64())
+                            .or_else(|| data["id"].as_i64())
+                            .or_else(|| resp["groupId"].as_i64())
+                            .or_else(|| resp["id"].as_i64())
+                            .unwrap_or(0);
+                        if id > 0 {
+                            mapping.access_groups.insert(source_group.group_id, id);
+                            let msg = format!(
+                                "Created access group '{}' at {} (ID: {})",
+                                group_name, ou_label, id
+                            );
+                            tracing::info!("{}", msg);
+                            emit_log(app_handle, "success", &msg);
+                        }
                     }
-                }
-                Err(rest_err) => {
-                    // REST failed — try SOAP fallback
-                    tracing::warn!("REST create access group failed for '{}': {}. Trying SOAP...", group_name, rest_err);
-                    if let Some(soap) = soap_client {
-                        match soap.access_group_add(group_name, description, dest_so_id, group_type, true).await {
-                            Ok(id) => {
-                                if id != 0 {
-                                    mapping.access_groups.insert(source_group.group_id, id);
-                                    tracing::info!("Created access group '{}' via SOAP (ID: {})", group_name, id);
+                    Err(rest_err) => {
+                        tracing::warn!(
+                            "REST create access group failed for '{}': {}. Trying SOAP...",
+                            group_name, rest_err
+                        );
+                        if let Some(soap) = soap_client {
+                            match soap
+                                .access_group_add(
+                                    group_name,
+                                    description,
+                                    dest_ou,
+                                    group_type,
+                                    true,
+                                )
+                                .await
+                            {
+                                Ok(id) => {
+                                    if id > 0 {
+                                        mapping.access_groups.insert(source_group.group_id, id);
+                                                    let msg = format!(
+                                            "Created access group '{}' at {} via SOAP (ID: {})",
+                                            group_name, ou_label, id
+                                        );
+                                        tracing::info!("{}", msg);
+                                        emit_log(app_handle, "success", &msg);
+                                    }
+                                }
+                                Err(soap_err) => {
+                                    let msg = format!(
+                                        "Failed to create access group '{}' at {} (REST: {}, SOAP: {})",
+                                        group_name, ou_label, rest_err, soap_err
+                                    );
+                                    tracing::error!("{}", msg);
+                                    emit_log(app_handle, "error", &msg);
                                 }
                             }
-                            Err(soap_err) => {
-                                tracing::error!("Failed to create access group '{}' (REST: {}, SOAP: {})", group_name, rest_err, soap_err);
-                            }
+                        } else {
+                            let msg = format!(
+                                "Failed to create access group '{}' at {}: {}",
+                                group_name, ou_label, rest_err
+                            );
+                            tracing::error!("{}", msg);
+                            emit_log(app_handle, "error", &msg);
                         }
-                    } else {
-                        tracing::error!("Failed to create access group '{}': {}", group_name, rest_err);
                     }
                 }
             }
         }
     }
+
+    emit_log(
+        app_handle,
+        "info",
+        &format!(
+            "Access Groups: {} total mappings across {} org units",
+            mapping.access_groups.len(),
+            total_ous
+        ),
+    );
 
     Ok(())
 }
 
-/// Migrate users from source to destination via SOAP API.
-/// Populates `mapping.user_logins`.
+/// Migrate users from source to destination via SOAP API across all org unit levels.
+/// Fetches users from each org unit (SO, customers, sites) and creates them at the
+/// matching destination org unit. Populates `mapping.user_logins`.
 async fn migrate_users(
     source: &NcClient,
     dest: &NcClient,
     source_so_id: i64,
-    dest_so_id: i64,
+    _dest_so_id: i64,
     mapping: &mut IdMapping,
-    state: &State<'_, AppState>,
+    soap_client: Option<&NcSoapClient>,
     app_handle: &AppHandle,
 ) -> Result<(), String> {
+    // Build a complete source role_id -> role_name map across ALL org units
     report_progress(app_handle, "Users", "Fetching source users and roles...", 70.0);
-    let source_users = source
-        .get_users_by_org_unit(source_so_id)
-        .await
-        .map_err(|e| format!("Failed to fetch source users: {}", e))?;
+    let mut source_role_id_to_name: HashMap<i64, String> = HashMap::new();
+    for &src_ou in mapping.org_units.keys() {
+        let roles = source.get_user_roles(src_ou).await.unwrap_or_default();
+        for r in roles {
+            if let Some(name) = r.role_name {
+                source_role_id_to_name.insert(r.role_id, name.to_lowercase());
+            }
+        }
+    }
 
-    // Build source role_id -> role_name map
-    let source_roles = source
-        .get_user_roles(source_so_id)
-        .await
-        .unwrap_or_default();
-    let source_role_id_to_name: HashMap<i64, String> = source_roles
-        .iter()
-        .filter_map(|r| {
-            r.role_name
-                .as_ref()
-                .map(|name| (r.role_id, name.to_lowercase()))
-        })
-        .collect();
-
-    // If role_names is empty (roles weren't migrated), populate from destination
+    // If role_names map is empty (roles weren't migrated), populate from all dest org units
     if mapping.role_names.is_empty() {
         tracing::info!("Role names map is empty - fetching destination roles to populate...");
-        let dest_roles = dest.get_user_roles(dest_so_id).await.unwrap_or_default();
-        for r in dest_roles {
-            if let Some(name) = r.role_name {
-                mapping.role_names.insert(name.to_lowercase(), r.role_id);
+        for &dest_ou in mapping.org_units.values() {
+            let dest_roles = dest.get_user_roles(dest_ou).await.unwrap_or_default();
+            for r in dest_roles {
+                if let Some(name) = r.role_name {
+                    mapping.role_names.insert(name.to_lowercase(), r.role_id);
+                }
             }
         }
         tracing::info!(
@@ -667,26 +883,87 @@ async fn migrate_users(
         );
     }
 
-    tracing::info!(
-        "Built source role ID→name map with {} entries. role_names map has {} entries.",
+    let msg = format!(
+        "Users: Built source role ID->name map with {} entries. Dest role_names map has {} entries.",
         source_role_id_to_name.len(),
         mapping.role_names.len()
     );
+    tracing::info!("{}", msg);
+    emit_log(app_handle, "debug", &msg);
 
-    report_progress(app_handle, "Users", "Fetching destination users...", 75.0);
-    let dest_users = dest
-        .get_users_by_org_unit(dest_so_id)
-        .await
-        .map_err(|e| format!("Failed to fetch destination users: {}", e))?;
+    // Build a global dest login map across all org units (to skip existing users)
+    report_progress(app_handle, "Users", "Fetching destination users...", 73.0);
+    let mut dest_login_map: HashMap<String, i64> = HashMap::new();
+    for &dest_ou in mapping.org_units.values() {
+        let dest_users = dest.get_users_by_org_unit(dest_ou).await.unwrap_or_default();
+        for u in dest_users {
+            dest_login_map.insert(u.login_name.to_lowercase(), u.user_id);
+        }
+    }
 
-    let dest_login_map: HashMap<String, i64> = dest_users
-        .into_iter()
-        .map(|u| (u.login_name.to_lowercase(), u.user_id))
-        .collect();
+    // Fetch users from every source org unit, ordered SO → customers → sites.
+    // Processing top-down ensures that if a user appears at multiple levels
+    // (e.g., inherited), we pick the most specific (deepest) level via dedup.
+    // Actually we reverse: sites first so the deepest OU wins in dedup.
+    let mut org_unit_pairs: Vec<(i64, i64)> = Vec::new();
+    // Sites first (most specific)
+    for (&src, &dst) in &mapping.sites {
+        org_unit_pairs.push((src, dst));
+    }
+    // Then customers
+    for (&src, &dst) in &mapping.customers {
+        org_unit_pairs.push((src, dst));
+    }
+    // SO last (least specific) — dedup will skip users already seen at deeper levels
+    if let Some(&dest_so) = mapping.org_units.get(&source_so_id) {
+        org_unit_pairs.push((source_so_id, dest_so));
+    }
+    let total_ous = org_unit_pairs.len();
+    let mut all_source_users: Vec<(crate::models::User, i64)> = Vec::new(); // (user, dest_ou_id)
+    let mut seen_logins: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let total = source_users.len();
-    for (i, source_user) in source_users.into_iter().enumerate() {
-        let progress = 75.0 + (i as f32 / total as f32) * 15.0;
+    for (idx, &(src_ou, dest_ou)) in org_unit_pairs.iter().enumerate() {
+        let progress = 73.0 + (idx as f32 / total_ous as f32) * 4.0;
+        let ou_label = if src_ou == source_so_id {
+            "Service Org".to_string()
+        } else if mapping.customers.contains_key(&src_ou) {
+            format!("Customer {}", src_ou)
+        } else {
+            format!("Site {}", src_ou)
+        };
+
+        report_progress(
+            app_handle,
+            "Users",
+            &format!("Fetching users from {} ...", ou_label),
+            progress,
+        );
+
+        let users = source.get_users_by_org_unit(src_ou).await.unwrap_or_default();
+        for user in users {
+            let login_lower = user.login_name.to_lowercase();
+            if seen_logins.contains(&login_lower) {
+                continue; // Skip duplicates (user may appear at parent OU too)
+            }
+            seen_logins.insert(login_lower);
+            all_source_users.push((user, dest_ou));
+        }
+    }
+
+    emit_log(
+        app_handle,
+        "info",
+        &format!(
+            "Users: Found {} unique users across {} org units",
+            all_source_users.len(),
+            total_ous
+        ),
+    );
+
+    // Create users
+    let total = all_source_users.len();
+    for (i, (source_user, dest_ou)) in all_source_users.into_iter().enumerate() {
+        let progress = 77.0 + (i as f32 / total as f32) * 13.0;
         report_progress(
             app_handle,
             "Users",
@@ -694,61 +971,94 @@ async fn migrate_users(
             progress,
         );
 
-        if dest_login_map.contains_key(&source_user.login_name.to_lowercase()) {
-            tracing::info!(
-                "User '{}' already exists on destination",
-                source_user.login_name
+        if let Some(&existing_id) = dest_login_map.get(&source_user.login_name.to_lowercase()) {
+            let msg = format!(
+                "User '{}' already exists on destination (ID: {}) — skipped",
+                source_user.login_name, existing_id
             );
+            tracing::info!("{}", msg);
+            emit_log(app_handle, "debug", &msg);
+            // Still record access group membership so existing users are included in groups
+            for &src_group_id in &source_user.access_group_ids {
+                mapping.access_group_members.entry(src_group_id).or_default().push(existing_id);
+            }
             continue;
         }
 
-        // Map source role IDs -> dest role IDs via role names
+        // Map source role IDs -> dest role IDs via direct ID mapping (populated during role migration).
+        // Falls back to name-based lookup if direct mapping is missing.
         let mapped_roles: Vec<i64> = source_user
             .role_ids
             .iter()
             .filter_map(|src_role_id| {
+                // Primary: direct source_role_id → dest_role_id mapping
+                if let Some(&dest_role_id) = mapping.roles.get(src_role_id) {
+                    let role_name = source_role_id_to_name.get(src_role_id).map(|s| s.as_str()).unwrap_or("?");
+                    emit_log(
+                        app_handle,
+                        "debug",
+                        &format!("Mapped role: src {} ('{}') → dest {}", src_role_id, role_name, dest_role_id),
+                    );
+                    return Some(dest_role_id);
+                }
+                // Fallback: name-based lookup (for roles that weren't in the migration batch)
                 if let Some(role_name) = source_role_id_to_name.get(src_role_id) {
                     if let Some(&dest_role_id) = mapping.role_names.get(role_name) {
-                        tracing::debug!(
-                            "Mapped role: source_id {} -> name '{}' -> dest_id {}",
-                            src_role_id,
-                            role_name,
-                            dest_role_id
+                        emit_log(
+                            app_handle,
+                            "debug",
+                            &format!("Mapped role via name: src {} ('{}') → dest {}", src_role_id, role_name, dest_role_id),
                         );
                         return Some(dest_role_id);
                     }
                 }
-                tracing::warn!(
-                    "Could not map source role ID {} to destination for user '{}'",
-                    src_role_id,
-                    source_user.login_name
+                emit_log(
+                    app_handle,
+                    "debug",
+                    &format!(
+                        "Could not map source role ID {} to destination for user '{}'",
+                        src_role_id, source_user.login_name
+                    ),
                 );
                 None
             })
             .collect();
 
+        // Determine destination org unit: prefer the user's org_unit_id mapped through
+        // mapping.org_units, falling back to the OU we fetched them from
+        let dest_customer_id = source_user
+            .org_unit_id
+            .and_then(|src_org_id| mapping.org_units.get(&src_org_id).cloned())
+            .unwrap_or(dest_ou);
+
+        emit_log(
+            app_handle,
+            "debug",
+            &format!(
+                "User '{}' — source roles: {:?}, mapped dest roles: {:?}, dest OU: {} (org_unit_id: {:?})",
+                source_user.login_name, source_user.role_ids, mapped_roles, dest_customer_id, source_user.org_unit_id
+            ),
+        );
         tracing::info!(
-            "User '{}' - Source role_ids: {:?}, Mapped to dest: {:?}",
+            "User '{}' - source role_ids: {:?}, mapped dest roles: {:?}, dest OU: {}",
             source_user.login_name,
             source_user.role_ids,
-            mapped_roles
+            mapped_roles,
+            dest_customer_id
         );
 
         // Use SOAP API for user creation (REST API doesn't support it)
-        let dest_soap_client = state.dest_soap_client.lock().await;
-        if let Some(soap) = &*dest_soap_client {
-            let dest_customer_id = source_user
-                .service_org_id
-                .and_then(|src_org_id| mapping.org_units.get(&src_org_id).cloned())
-                .unwrap_or(dest_so_id);
-
-            tracing::info!(
-                "Creating user '{}' via SOAP API at customerID {} (source org: {:?})...",
-                source_user.login_name,
-                dest_customer_id,
-                source_user.service_org_id
+        if let Some(soap) = soap_client {
+            emit_log(
+                app_handle,
+                "info",
+                &format!(
+                    "Users: Creating user '{}' via SOAP (customerID: {})...",
+                    source_user.login_name, dest_customer_id
+                ),
             );
 
+            let extra = source_user.extra.as_ref();
             let user_info = UserAddInfo {
                 email: source_user
                     .email
@@ -756,10 +1066,10 @@ async fn migrate_users(
                     .unwrap_or_else(|| source_user.login_name.clone()),
                 first_name: source_user.first_name.clone().unwrap_or_default(),
                 last_name: source_user.last_name.clone().unwrap_or_default(),
-                phone: None,
-                department: None,
-                location: None,
-                is_enabled: true,
+                phone: extra.and_then(|e| e.phone.clone()),
+                department: extra.and_then(|e| e.department.clone()),
+                location: extra.and_then(|e| e.location.clone()),
+                is_enabled: source_user.is_enabled,
                 customer_id: dest_customer_id,
                 role_ids: mapped_roles,
                 access_group_ids: vec![],
@@ -771,25 +1081,32 @@ async fn migrate_users(
                         mapping
                             .user_logins
                             .insert(source_user.login_name.to_lowercase(), id);
-                        tracing::info!(
-                            "Created user '{}' (ID: {})",
-                            source_user.login_name,
-                            id
+                        // Record source access group membership for this user
+                        for &src_group_id in &source_user.access_group_ids {
+                            mapping.access_group_members.entry(src_group_id).or_default().push(id);
+                        }
+                        let msg = format!(
+                            "Created user '{}' at OU {} (ID: {})",
+                            source_user.login_name, dest_customer_id, id
                         );
+                        tracing::info!("{}", msg);
+                        emit_log(app_handle, "success", &msg);
                     } else {
-                        tracing::warn!(
+                        let msg = format!(
                             "User '{}' returned ID {} - may already exist elsewhere",
-                            source_user.login_name,
-                            id
+                            source_user.login_name, id
                         );
+                        tracing::warn!("{}", msg);
+                        emit_log(app_handle, "warning", &msg);
                     }
                 }
                 Err(e) => {
-                    tracing::error!(
+                    let msg = format!(
                         "Failed to create user '{}' via SOAP: {}",
-                        source_user.login_name,
-                        e
+                        source_user.login_name, e
                     );
+                    tracing::error!("{}", msg);
+                    emit_log(app_handle, "error", &msg);
                 }
             }
         } else {
@@ -799,12 +1116,6 @@ async fn migrate_users(
             );
         }
     }
-
-    tracing::info!(
-        "User migration note: N-Central REST API does not support creating users. \
-         Users not found in destination must be created manually in the N-Central Admin UI, \
-         then re-run migration to sync their roles and access groups."
-    );
 
     Ok(())
 }
@@ -848,24 +1159,17 @@ async fn migrate_org_properties(
                     mapped_id
                 } else if src_ou_id == source_so_id {
                     // Property belongs to the source SO root — skip or use a default
-                    tracing::info!(
-                        "Property {:?} belongs to source SO root, skipping",
-                        prop.label
-                    );
+                    emit_log(app_handle, "debug", &format!("Property {:?} belongs to source SO root — skipped", prop.label));
                     skipped += 1;
                     continue;
                 } else {
-                    tracing::warn!(
-                        "No mapping for source org unit {} (property: {:?}), skipping",
-                        src_ou_id,
-                        prop.label
-                    );
+                    emit_log(app_handle, "debug", &format!("No mapping for source org unit {} (property: {:?}) — skipped", src_ou_id, prop.label));
                     skipped += 1;
                     continue;
                 }
             }
             None => {
-                tracing::warn!("Property {:?} has no org_unit_id, skipping", prop.label);
+                emit_log(app_handle, "debug", &format!("Property {:?} has no org_unit_id — skipped", prop.label));
                 skipped += 1;
                 continue;
             }
@@ -881,6 +1185,7 @@ async fn migrate_org_properties(
         match dest.set_custom_property_value(&value_payload).await {
             Ok(_) => {
                 synced += 1;
+                emit_log(app_handle, "debug", &format!("Synced property {:?} to OU {}", prop.label, dest_ou_id));
             }
             Err(rest_err) => {
                 // REST failed — try SOAP fallback
@@ -889,21 +1194,25 @@ async fn migrate_org_properties(
                     match soap.organization_property_modify(dest_ou_id, prop.property_id, prop_value).await {
                         Ok(_) => {
                             synced += 1;
-                            tracing::info!("Synced property {:?} via SOAP fallback", prop.label);
+                            emit_log(app_handle, "debug", &format!("Synced property {:?} to OU {} via SOAP fallback", prop.label, dest_ou_id));
                         }
                         Err(soap_err) => {
-                            tracing::warn!(
+                            let msg = format!(
                                 "Failed to sync property {:?} to OU {} (REST: {}, SOAP: {})",
                                 prop.label, dest_ou_id, rest_err, soap_err
                             );
+                            tracing::warn!("{}", msg);
+                            emit_log(app_handle, "debug", &msg);
                             failed += 1;
                         }
                     }
                 } else {
-                    tracing::warn!(
+                    let msg = format!(
                         "Failed to sync property {:?} to OU {}: {}",
                         prop.label, dest_ou_id, rest_err
                     );
+                    tracing::warn!("{}", msg);
+                    emit_log(app_handle, "debug", &msg);
                     failed += 1;
                 }
             }
@@ -975,14 +1284,9 @@ pub async fn start_migration(
         migrate_customers_and_sites(source, dest, source_so_id, dest_so_id, &mut mapping, soap_ref, &app_handle).await?;
     }
 
-    // 2. User Roles
+    // 2. User Roles (at all org unit levels)
     if options.user_roles {
         migrate_user_roles(source, dest, source_so_id, dest_so_id, &mut mapping, soap_ref, &app_handle).await?;
-    }
-
-    // 3. Access Groups
-    if options.access_groups {
-        migrate_access_groups(source, dest, source_so_id, dest_so_id, &mut mapping, soap_ref, &app_handle).await?;
     }
 
     // 3. Users — must run BEFORE access groups so their IDs are available.
@@ -991,7 +1295,12 @@ pub async fn start_migration(
     // Users are fetched from every level (SO, each customer, each site) and
     // created at the exact same org unit level they occupy on the source.
     if options.users {
-        migrate_users(source, dest, source_so_id, dest_so_id, &mut mapping, &state, &app_handle).await?;
+        migrate_users(source, dest, source_so_id, dest_so_id, &mut mapping, soap_ref, &app_handle).await?;
+    }
+
+    // 4. Access Groups (at all org unit levels — after users so user IDs are available)
+    if options.access_groups {
+        migrate_access_groups(source, dest, source_so_id, dest_so_id, &mut mapping, soap_ref, &app_handle).await?;
     }
 
     // 5. Custom Properties

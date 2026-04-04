@@ -78,19 +78,24 @@ export function ProgressPanel({
                             className="btn btn-ghost"
                             style={{ padding: '4px 8px', fontSize: '0.7rem' }}
                             onClick={async () => {
-                                const { save } = await import('@tauri-apps/plugin-dialog');
-                                const { writeTextFile } = await import('@tauri-apps/plugin-fs');
-                                const filePath = await save({
-                                    title: 'Export Logs',
-                                    defaultPath: `nc-export-logs-${new Date().toISOString().slice(0, 10)}.txt`,
-                                    filters: [{ name: 'Text Files', extensions: ['txt'] }]
-                                });
-                                if (filePath) {
-                                    const logText = logs.map(l =>
-                                        `[${l.timestamp.toLocaleString()}] [${l.level.toUpperCase()}] ${l.message}`
-                                    ).join('\n');
-                                    await writeTextFile(filePath, logText);
-                                    addLog('success', `Logs exported to ${filePath}`);
+                                try {
+                                    const { save } = await import('@tauri-apps/plugin-dialog');
+                                    const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+                                    const filePath = await save({
+                                        title: 'Export Logs',
+                                        defaultPath: `nc-export-logs-${new Date().toISOString().slice(0, 10)}.txt`,
+                                        filters: [{ name: 'Text Files', extensions: ['txt'] }]
+                                    });
+                                    if (filePath) {
+                                        const logText = logs.map(l =>
+                                            `[${l.timestamp.toLocaleString()}] [${l.level.toUpperCase()}] ${l.message}`
+                                        ).join('\n');
+                                        await writeTextFile(filePath, logText);
+                                        addLog('success', `Logs exported to ${filePath}`);
+                                    }
+                                } catch (err) {
+                                    console.error('Export failed:', err);
+                                    addLog('error', `Failed to export logs: ${err}`);
                                 }
                             }}
                         >
