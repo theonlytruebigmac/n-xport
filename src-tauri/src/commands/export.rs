@@ -627,13 +627,13 @@ pub fn get_export_types() -> Vec<serde_json::Value> {
         serde_json::json!({"id": "service_orgs", "name": "Service Organizations", "default": true}),
         serde_json::json!({"id": "customers", "name": "Customers", "default": true}),
         serde_json::json!({"id": "sites", "name": "Sites", "default": true}),
-        serde_json::json!({"id": "devices", "name": "Devices", "default": true}),
+        serde_json::json!({"id": "devices", "name": "Devices", "default": true, "migrationComingSoon": true}),
         serde_json::json!({"id": "access_groups", "name": "Access Groups", "default": true}),
         serde_json::json!({"id": "user_roles", "name": "User Roles", "default": true}),
-        serde_json::json!({"id": "org_properties", "name": "Organization Properties", "default": true}),
+        serde_json::json!({"id": "org_properties", "name": "Organization Properties", "default": true, "migrationComingSoon": true}),
         serde_json::json!({"id": "users", "name": "Users", "default": true}),
-        serde_json::json!({"id": "device_properties", "name": "Device Properties", "default": false}),
-        serde_json::json!({"id": "device_assets", "name": "Device Assets (Hardware)", "default": false}),
+        serde_json::json!({"id": "device_properties", "name": "Device Properties", "default": false, "migrationComingSoon": true}),
+        serde_json::json!({"id": "device_assets", "name": "Device Assets (Hardware)", "default": false, "migrationComingSoon": true}),
     ]
 }
 

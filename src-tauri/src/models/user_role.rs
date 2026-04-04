@@ -26,7 +26,7 @@ pub struct UserRoleExtra {
 #[serde(rename_all = "camelCase")]
 pub struct UserRole {
     /// The actual field name from N-Central is "roleId"
-    #[serde(alias = "userRoleId")]
+    #[serde(alias = "userRoleId", deserialize_with = "crate::models::common::string_or_i64")]
     pub role_id: i64,
     #[serde(default)]
     pub role_name: Option<String>,

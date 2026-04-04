@@ -9,6 +9,9 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/schemas/
 
+# seed demo data
+/scripts/*
+
 # Logs
 logs/
 *.log
@@ -45,9 +48,18 @@ Desktop.ini
 # Debug files
 *.pdb
 
-# Tauri signing keys (NEVER commit these!)
+# TypeScript build info
+*.tsbuildinfo
+
+# Lint cache
+.eslintcache
+
+# Tauri signing keys and certificates (NEVER commit these!)
 *.key
 *.key.pub
+*.pem
+*.p12
+*.pfx
 
 # Temporary files
 *.tmp

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrgProperty {
+    #[serde(deserialize_with = "crate::models::common::string_or_i64")]
     pub property_id: i64,
     #[serde(default)]
     pub label: Option<String>,
@@ -23,6 +24,7 @@ pub struct OrgProperty {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceProperty {
+    #[serde(deserialize_with = "crate::models::common::string_or_i64")]
     pub property_id: i64,
     #[serde(default)]
     pub device_id: Option<i64>,

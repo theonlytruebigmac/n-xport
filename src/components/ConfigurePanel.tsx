@@ -56,12 +56,24 @@ export function ConfigurePanel({
                     {appMode === 'migrate' ? 'Data to Migrate' : 'Data to Export'}
                 </label>
                 <div className="data-types-grid">
-                    {exportTypes.map(type => (
-                        <label key={type.id} className={`checkbox-item ${selectedTypes.has(type.id) ? 'selected' : ''}`}>
-                            <input type="checkbox" checked={selectedTypes.has(type.id)} onChange={() => onToggleExportType(type.id)} />
-                            <span>{type.name}</span>
-                        </label>
-                    ))}
+                    {exportTypes.map(type => {
+                        const comingSoon = appMode === 'migrate' && type.migrationComingSoon;
+                        return (
+                            <label
+                                key={type.id}
+                                className={`checkbox-item ${selectedTypes.has(type.id) && !comingSoon ? 'selected' : ''} ${comingSoon ? 'disabled' : ''}`}
+                                style={comingSoon ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedTypes.has(type.id) && !comingSoon}
+                                    disabled={comingSoon}
+                                    onChange={() => !comingSoon && onToggleExportType(type.id)}
+                                />
+                                <span>{type.name}{comingSoon ? <em style={{ marginLeft: '0.4em', fontSize: '0.75em', opacity: 0.7 }}>(Coming Soon)</em> : null}</span>
+                            </label>
+                        );
+                    })}
                 </div>
             </div>
 

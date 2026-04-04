@@ -212,8 +212,13 @@ impl NcClient {
                 ApiError::InvalidResponse(format!("Failed to read response body: {}", e))
             })?;
 
+            // Some N-central endpoints return 2xx with an empty body (e.g., 201 Created for
+            // access group creation). Treat empty body as an empty JSON object so callers
+            // receive Ok(Value::Object({})) instead of a parse error.
+            let parse_text = if body_text.is_empty() { "{}" } else { &body_text };
+
             // Parse JSON, logging body on error
-            return serde_json::from_str(&body_text).map_err(|e| {
+            return serde_json::from_str(parse_text).map_err(|e| {
                 tracing::error!(
                     "JSON parse error for {} {}: {}. Body: {}",
                     method,
@@ -314,9 +319,16 @@ impl NcClient {
         self.get_all_pages(paths::SITES, DEFAULT_PAGE_SIZE, |_, _| {}).await
     }
 
-    /// Get sites under a service org
+    /// Get all sites (global list, used by export with client-side SO filtering)
     pub async fn get_sites_by_so(&self, so_id: i64) -> ApiResult<Vec<Site>> {
         let path = endpoints::service_org_sites(so_id);
+        self.get_all_pages(&path, DEFAULT_PAGE_SIZE, |_, _| {}).await
+    }
+
+    /// Get sites directly under a specific customer via /api/customers/{id}/sites
+    /// Used by migration to scope site fetches to each mapped customer.
+    pub async fn get_sites_by_customer(&self, customer_id: i64) -> ApiResult<Vec<Site>> {
+        let path = endpoints::customer_sites(customer_id);
         self.get_all_pages(&path, DEFAULT_PAGE_SIZE, |_, _| {}).await
     }
 
@@ -340,29 +352,25 @@ impl NcClient {
     /// Get access groups for an org unit
     pub async fn get_access_groups(&self, org_unit_id: i64) -> ApiResult<Vec<AccessGroup>> {
         let path = endpoints::org_unit_access_groups(org_unit_id);
-        let response: PaginatedResponse<AccessGroup> = self.get(&path).await?;
-        Ok(response.data)
+        self.get_all_pages(&path, 100, |_, _| {}).await
     }
 
     /// Get user roles for an org unit
     pub async fn get_user_roles(&self, org_unit_id: i64) -> ApiResult<Vec<UserRole>> {
         let path = endpoints::org_unit_user_roles(org_unit_id);
-        let response: PaginatedResponse<UserRole> = self.get(&path).await?;
-        Ok(response.data)
+        self.get_all_pages(&path, 100, |_, _| {}).await
     }
 
     /// Get custom properties for an org unit
     pub async fn get_org_properties(&self, org_unit_id: i64) -> ApiResult<Vec<OrgProperty>> {
         let path = endpoints::org_unit_custom_properties(org_unit_id);
-        let response: PaginatedResponse<OrgProperty> = self.get(&path).await?;
-        Ok(response.data)
+        self.get_all_pages(&path, 100, |_, _| {}).await
     }
 
     /// Get custom properties for a device
     pub async fn get_device_properties(&self, device_id: i64) -> ApiResult<Vec<DeviceProperty>> {
         let path = endpoints::device_custom_properties(device_id);
-        let response: PaginatedResponse<DeviceProperty> = self.get(&path).await?;
-        Ok(response.data)
+        self.get_all_pages(&path, 100, |_, _| {}).await
     }
 
     /// Get device assets
@@ -430,5 +438,17 @@ impl NcClient {
         value_data: &serde_json::Value,
     ) -> ApiResult<serde_json::Value> {
         self.post(paths::CUSTOM_PROPERTIES_VALUES, value_data).await
+    }
+
+    /// Update a single org unit custom property value via PUT
+    pub async fn update_org_unit_property_value(
+        &self,
+        org_unit_id: i64,
+        property_id: i64,
+        value: &str,
+    ) -> ApiResult<serde_json::Value> {
+        let path = endpoints::org_unit_custom_property(org_unit_id, property_id);
+        let body = serde_json::json!({ "value": value });
+        self.put(&path, &body).await
     }
 }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct AccessGroup {
     /// The actual field name from N-Central is "groupId"
-    #[serde(alias = "accessGroupId")]
+    #[serde(alias = "accessGroupId", deserialize_with = "crate::models::common::string_or_i64")]
     pub group_id: i64,
     #[serde(default)]
     pub org_unit_id: Option<i64>,

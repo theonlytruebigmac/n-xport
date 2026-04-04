@@ -74,6 +74,7 @@ export interface ExportType {
   id: string;
   name: string;
   default: boolean;
+  migrationComingSoon?: boolean;
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';

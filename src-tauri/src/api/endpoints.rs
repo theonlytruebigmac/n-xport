@@ -75,9 +75,14 @@ pub fn org_unit_user_roles(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/user-roles", org_unit_id)
 }
 
-/// Build URL for org unit custom properties
+/// Build URL for org unit custom properties (list / paginated GET)
 pub fn org_unit_custom_properties(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/custom-properties", org_unit_id)
+}
+
+/// Build URL for a single org unit custom property value (PUT to update)
+pub fn org_unit_custom_property(org_unit_id: i64, property_id: i64) -> String {
+    format!("/api/org-units/{}/custom-properties/{}", org_unit_id, property_id)
 }
 
 /// Build URL for org unit users

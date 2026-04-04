@@ -518,21 +518,26 @@ fn generate_strong_password() -> String {
     let upper: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let lower: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
     let numbers: &[u8] = b"0123456789";
-    let special: &[u8] = b"!@#$%^&*()_+-=[]{}|;:,.<>?";
+    // Restrict to characters safe across XML escaping and all N-central password policies.
+    // Excludes XML-special chars (&, <, >, ", ') that can corrupt SOAP payloads.
+    let special: &[u8] = b"!@#$%^*_-+=";
 
     let mut rng = rand::thread_rng();
 
     let mut password = Vec::with_capacity(12);
 
-    // Ensure one of each required type
+    // Ensure one of each required type. N-central policy requires at least 3 special chars
+    // so push 3 to guarantee compliance regardless of the random fill.
     password.push(upper[rng.gen_range(0..upper.len())]);
     password.push(lower[rng.gen_range(0..lower.len())]);
     password.push(numbers[rng.gen_range(0..numbers.len())]);
     password.push(special[rng.gen_range(0..special.len())]);
+    password.push(special[rng.gen_range(0..special.len())]);
+    password.push(special[rng.gen_range(0..special.len())]);
 
-    // Fill remaining 8 chars (total 12) from all character sets
+    // Fill remaining 6 chars (total 12) from all character sets
     let all_chars: Vec<u8> = [upper, lower, numbers, special].concat();
-    for _ in 0..8 {
+    for _ in 0..6 {
         password.push(all_chars[rng.gen_range(0..all_chars.len())]);
     }
 

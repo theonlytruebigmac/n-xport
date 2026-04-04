@@ -922,6 +922,23 @@ async fn migrate_org_properties(
     Ok(())
 }
 
+/// Collects per-category outcomes for the post-migration summary report.
+#[derive(Default)]
+struct MigrationSummary {
+    roles_failed: Vec<String>,
+    /// Users created without any role because their source role(s) could not be mapped
+    /// (e.g. system/built-in roles are not returned by the custom roles API).
+    users_no_roles: Vec<(String, Vec<String>)>, // (login, source_role_ids as strings)
+    users_failed: Vec<String>,
+    /// Access groups successfully created on the destination (users included in payload).
+    access_groups_created: Vec<String>,
+    /// Access groups that already existed on the destination.
+    /// N-central has no API to update group membership, so newly migrated users
+    /// from the source were NOT added to these groups.
+    access_groups_existed_not_updated: Vec<String>,
+    access_groups_failed: Vec<String>,
+}
+
 // ==================== Main Migration Command ====================
 
 #[tauri::command]
@@ -941,6 +958,10 @@ pub async fn start_migration(
     };
 
     let mut mapping = IdMapping::new();
+    let summary = MigrationSummary::default();
+
+    // Always ensure the SO pair is in org_units, regardless of which options are selected.
+    mapping.org_units.insert(source_so_id, dest_so_id);
 
     report_progress(&app_handle, "Migration", "Starting migration engine...", 0.0);
     emit_log(&app_handle, "info", "Starting migration engine...");
@@ -964,7 +985,11 @@ pub async fn start_migration(
         migrate_access_groups(source, dest, source_so_id, dest_so_id, &mut mapping, soap_ref, &app_handle).await?;
     }
 
-    // 4. Users
+    // 3. Users — must run BEFORE access groups so their IDs are available.
+    // N-central has no API to update access group membership after creation,
+    // so users must exist first and their IDs passed in the create payload.
+    // Users are fetched from every level (SO, each customer, each site) and
+    // created at the exact same org unit level they occupy on the source.
     if options.users {
         migrate_users(source, dest, source_so_id, dest_so_id, &mut mapping, &state, &app_handle).await?;
     }
@@ -973,6 +998,77 @@ pub async fn start_migration(
     if options.org_properties {
         migrate_org_properties(source, dest, source_so_id, &mapping, soap_ref, &app_handle).await?;
     }
+
+    // ── Post-migration summary ──────────────────────────────────────────────────
+    emit_log(&app_handle, "info", "─────────────── Migration Summary ───────────────");
+
+    let has_issues = !summary.roles_failed.is_empty()
+        || !summary.users_failed.is_empty()
+        || !summary.users_no_roles.is_empty()
+        || !summary.access_groups_existed_not_updated.is_empty()
+        || !summary.access_groups_failed.is_empty();
+
+    if !summary.roles_failed.is_empty() {
+        emit_log(&app_handle, "warning", &format!(
+            "Roles not created ({}) — missing description in source: {}",
+            summary.roles_failed.len(),
+            summary.roles_failed.join(", ")
+        ));
+    }
+
+    if !summary.users_failed.is_empty() {
+        emit_log(&app_handle, "error", &format!(
+            "Users failed to create ({}): {}",
+            summary.users_failed.len(),
+            summary.users_failed.join(", ")
+        ));
+    }
+
+    if !summary.users_no_roles.is_empty() {
+        emit_log(&app_handle, "warning", &format!(
+            "Users created without roles ({}) — source role is a system role not available via API:",
+            summary.users_no_roles.len()
+        ));
+        for (login, roles) in &summary.users_no_roles {
+            emit_log(&app_handle, "warning", &format!("  • {} (source roles: {})", login, roles.join(", ")));
+        }
+        emit_log(&app_handle, "warning", "  → Assign roles manually via Administration > User Management > Users.");
+    }
+
+    if !summary.access_groups_created.is_empty() {
+        emit_log(&app_handle, "success", &format!(
+            "Access groups created with all destination users included ({}): {}",
+            summary.access_groups_created.len(),
+            summary.access_groups_created.join(", ")
+        ));
+    }
+
+    if !summary.access_groups_existed_not_updated.is_empty() {
+        emit_log(&app_handle, "warning", &format!(
+            "Access groups already on destination — newly migrated users NOT added ({}):",
+            summary.access_groups_existed_not_updated.len()
+        ));
+        for name in &summary.access_groups_existed_not_updated {
+            emit_log(&app_handle, "warning", &format!("  • {}", name));
+        }
+        emit_log(&app_handle, "warning", "  → N-central has no API to update existing group membership.");
+        emit_log(&app_handle, "warning", "  → Add migrated users manually via Administration > Access Groups.");
+    }
+
+    if !summary.access_groups_failed.is_empty() {
+        emit_log(&app_handle, "error", &format!(
+            "Access groups failed to create ({}): {}",
+            summary.access_groups_failed.len(),
+            summary.access_groups_failed.join(", ")
+        ));
+    }
+
+    if !has_issues {
+        emit_log(&app_handle, "success", "All items migrated successfully — no action required.");
+    }
+
+    emit_log(&app_handle, "info", "─────────────────────────────────────────────────");
+    // ────────────────────────────────────────────────────────────────────────────
 
     report_progress(&app_handle, "Complete", "Migration finished successfully", 100.0);
 
