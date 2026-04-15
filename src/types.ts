@@ -51,6 +51,7 @@ export interface ExportOptions {
   orgProperties: boolean;
   deviceProperties: boolean;
   users: boolean;
+  deviceAssets: boolean;
 }
 
 export interface ExportResult {

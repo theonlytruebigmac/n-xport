@@ -434,7 +434,8 @@ function App() {
         userRoles: selectedTypes.has('user_roles'),
         orgProperties: selectedTypes.has('org_properties'),
         deviceProperties: selectedTypes.has('device_properties'),
-        users: selectedTypes.has('users')
+        users: selectedTypes.has('users'),
+        deviceAssets: selectedTypes.has('device_assets')
       };
 
       const result = await api.startExport(outputDir, options, Array.from(exportFormats), parseInt(serviceOrgId));
