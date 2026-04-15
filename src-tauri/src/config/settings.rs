@@ -44,6 +44,7 @@ pub struct Profile {
     #[serde(default, rename = "type")]
     pub profile_type: ProfileType,
     /// Source connection config
+    #[serde(default)]
     pub source: ConnectionConfig,
     /// Destination connection config (only for migration type)
     #[serde(default, skip_serializing_if = "Option::is_none")]
