@@ -18,8 +18,9 @@ pub struct OrgProperty {
     pub property_type: Option<String>,
     #[serde(default)]
     pub org_unit_id: Option<i64>,
-    /// Extra fields from API response
-    #[serde(default, rename = "_extra")]
+    /// Extra fields from API response. Skipped on serialize because the csv
+    /// crate can't emit maps and nothing in this project reads these keys.
+    #[serde(default, rename = "_extra", skip_serializing)]
     pub extra: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
@@ -41,7 +42,8 @@ pub struct DeviceProperty {
     pub default_value: Option<String>,
     #[serde(default)]
     pub property_type: Option<String>,
-    /// Extra fields from API response
-    #[serde(default, rename = "_extra")]
+    /// Extra fields from API response. Skipped on serialize because the csv
+    /// crate can't emit maps and nothing in this project reads these keys.
+    #[serde(default, rename = "_extra", skip_serializing)]
     pub extra: Option<std::collections::HashMap<String, serde_json::Value>>,
 }

@@ -73,7 +73,7 @@ impl NcSoapClient {
             .timeout(Duration::from_secs(SOAP_TIMEOUT_SECS))
             .connect_timeout(Duration::from_secs(30))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .expect("failed to build SOAP HTTP client — check TLS/proxy config");
         Self {
             http_client,
             base_url: base_url.trim_end_matches('/').to_string(),

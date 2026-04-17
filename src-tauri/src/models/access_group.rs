@@ -65,3 +65,40 @@ impl AccessGroup {
             .and_then(|e| e.auto_include_new_org_units.clone())
     }
 }
+
+/// Flattened AccessGroup for CSV export. CSV can't serialize nested vecs/maps,
+/// so list fields are joined with `;` and the catch-all `other` map is dropped.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessGroupCsvRow {
+    pub group_id: i64,
+    pub org_unit_id: Option<i64>,
+    pub group_name: Option<String>,
+    pub group_type: Option<String>,
+    pub group_description: Option<String>,
+    pub usernames: String,
+    pub org_unit_ids: String,
+    pub auto_include_new_org_units: Option<String>,
+}
+
+impl From<&AccessGroup> for AccessGroupCsvRow {
+    fn from(ag: &AccessGroup) -> Self {
+        let usernames = ag.get_usernames().join(";");
+        let org_unit_ids = ag
+            .get_org_unit_ids()
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        Self {
+            group_id: ag.group_id,
+            org_unit_id: ag.org_unit_id,
+            group_name: ag.group_name.clone(),
+            group_type: ag.group_type.clone(),
+            group_description: ag.group_description.clone(),
+            usernames,
+            org_unit_ids,
+            auto_include_new_org_units: ag.get_auto_include(),
+        }
+    }
+}

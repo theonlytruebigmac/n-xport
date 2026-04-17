@@ -9,7 +9,9 @@ use tauri::{Emitter, State, Window};
 use crate::api::client::NcClient;
 use crate::commands::connection::AppState;
 use crate::export::{export_to_csv, export_to_json};
-use crate::models::{DeviceAsset, ExportOptions, ProgressUpdate};
+use crate::models::{
+    AccessGroupCsvRow, DeviceAsset, ExportOptions, ProgressUpdate, UserCsvRow, UserRoleCsvRow,
+};
 
 /// Flattened device asset for CSV-friendly export
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +117,49 @@ fn write_export_files<T: Serialize>(
     if export_json {
         let path = output_path.join(format!("{}.json", name));
         match export_to_json(data, &path) {
+            Ok(c) => {
+                files_created.push(path.display().to_string());
+                *total_records += c;
+            }
+            Err(e) => {
+                errors.push(format!("Failed to write {}.json: {}", name, e));
+            }
+        }
+    }
+}
+
+/// Like `write_export_files` but uses a separate flattened shape for CSV
+/// while the richer shape is preserved for JSON.
+fn write_split_export_files<C: Serialize, J: Serialize>(
+    csv_data: &[C],
+    json_data: &[J],
+    output_path: &Path,
+    name: &str,
+    export_csv: bool,
+    export_json: bool,
+    files_created: &mut Vec<String>,
+    total_records: &mut usize,
+    errors: &mut Vec<String>,
+) {
+    if json_data.is_empty() {
+        return;
+    }
+
+    if export_csv {
+        let path = output_path.join(format!("{}.csv", name));
+        match export_to_csv(csv_data, &path) {
+            Ok(c) => {
+                files_created.push(path.display().to_string());
+                *total_records += c;
+            }
+            Err(e) => {
+                errors.push(format!("Failed to write {}.csv: {}", name, e));
+            }
+        }
+    }
+    if export_json {
+        let path = output_path.join(format!("{}.json", name));
+        match export_to_json(json_data, &path) {
             Ok(c) => {
                 files_created.push(path.display().to_string());
                 *total_records += c;
@@ -318,8 +363,9 @@ pub async fn start_export(
 
         tracing::info!("Fetched {} unique users ({} before dedup).", unique_users.len(), seen_ids.len());
 
-        write_export_files(
-            &unique_users, &output_path, "users",
+        let csv_rows: Vec<UserCsvRow> = unique_users.iter().map(Into::into).collect();
+        write_split_export_files(
+            &csv_rows, &unique_users, &output_path, "users",
             export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
         );
     }
@@ -360,8 +406,9 @@ pub async fn start_export(
             "Access Groups", &emit_progress, 60.0, 5.0, &mut warnings,
         ).await;
 
-        write_export_files(
-            &all_data, &output_path, "access_groups",
+        let csv_rows: Vec<AccessGroupCsvRow> = all_data.iter().map(Into::into).collect();
+        write_split_export_files(
+            &csv_rows, &all_data, &output_path, "access_groups",
             export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
         );
     }
@@ -374,8 +421,9 @@ pub async fn start_export(
             "User Roles", &emit_progress, 70.0, 5.0, &mut warnings,
         ).await;
 
-        write_export_files(
-            &all_data, &output_path, "user_roles",
+        let csv_rows: Vec<UserRoleCsvRow> = all_data.iter().map(Into::into).collect();
+        write_split_export_files(
+            &csv_rows, &all_data, &output_path, "user_roles",
             export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
         );
     }

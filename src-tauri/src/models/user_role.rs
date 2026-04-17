@@ -45,6 +45,49 @@ impl UserRole {
             .map(|e| e.permissions.clone())
             .unwrap_or_default()
     }
+
+    /// Get the usernames assigned to this role from the _extra field
+    pub fn get_usernames(&self) -> Vec<String> {
+        self.extra
+            .as_ref()
+            .map(|e| e.usernames.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Flattened UserRole for CSV export. The `permissions` and `usernames`
+/// vectors vary in length per role, so CSV writes fail with mismatched
+/// field counts unless we join them into delimited strings.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserRoleCsvRow {
+    pub role_id: i64,
+    pub role_name: Option<String>,
+    pub role_description: Option<String>,
+    pub readonly: Option<String>,
+    pub cloneable: Option<String>,
+    pub permissions: String,
+    pub usernames: String,
+}
+
+impl From<&UserRole> for UserRoleCsvRow {
+    fn from(ur: &UserRole) -> Self {
+        let permissions = ur.get_permissions().join(";");
+        let usernames = ur.get_usernames().join(";");
+        let (readonly, cloneable) = match &ur.extra {
+            Some(e) => (e.readonly.clone(), e.cloneable.clone()),
+            None => (None, None),
+        };
+        Self {
+            role_id: ur.role_id,
+            role_name: ur.role_name.clone(),
+            role_description: ur.role_description.clone(),
+            readonly,
+            cloneable,
+            permissions,
+            usernames,
+        }
+    }
 }
 
 /// Mapping of permission name to permission ID

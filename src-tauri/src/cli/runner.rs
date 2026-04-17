@@ -4,6 +4,7 @@ use crate::api::NcClient;
 use crate::config::{Profile, Settings};
 use crate::credentials::CredentialStore;
 use crate::export::{export_to_csv, export_to_json};
+use crate::models::{AccessGroupCsvRow, UserRoleCsvRow};
 use std::io::{self, BufRead, Write};
 
 use super::{Cli, Commands, ExportArgs, ProfileCommands, TestArgs};
@@ -136,7 +137,8 @@ async fn run_export(
             Ok(data) => {
                 let count = data.len();
                 if export_csv {
-                    export_to_csv(&data, args.output.join("access_groups.csv"))?;
+                    let rows: Vec<AccessGroupCsvRow> = data.iter().map(Into::into).collect();
+                    export_to_csv(&rows, args.output.join("access_groups.csv"))?;
                 }
                 if export_json {
                     export_to_json(&data, args.output.join("access_groups.json"))?;
@@ -156,7 +158,8 @@ async fn run_export(
             Ok(data) => {
                 let count = data.len();
                 if export_csv {
-                    export_to_csv(&data, args.output.join("user_roles.csv"))?;
+                    let rows: Vec<UserRoleCsvRow> = data.iter().map(Into::into).collect();
+                    export_to_csv(&rows, args.output.join("user_roles.csv"))?;
                 }
                 if export_json {
                     export_to_json(&data, args.output.join("user_roles.json"))?;

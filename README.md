@@ -157,17 +157,66 @@ The application uses the N-Central REST API v2. Required API permissions:
 
 The application checks for updates automatically on startup and can download and install updates from GitHub Releases.
 
-## Building Releases
+## Releasing a New Version
 
-Releases are built automatically via GitHub Actions when a version tag is pushed:
+Releases are built automatically by the GitHub Actions workflow in
+[`.github/workflows/release.yml`](.github/workflows/release.yml) when a tag
+matching `v*` is pushed. Use the bundled `bump-version.sh` helper so that
+`package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` stay
+in sync — mismatched versions across these files will cause the release
+build to fail.
 
-```bash
-# Create and push a version tag
-git tag v0.1.0
-git push origin v0.1.0
-```
+### Steps
 
-This triggers the release workflow which builds for all platforms and creates signed update artifacts.
+1. Make sure your working tree is clean and on `main` with the latest changes:
+
+   ```bash
+   git checkout main
+   git pull --ff-only
+   git status   # should be clean
+   ```
+
+2. Bump the version. Pick one of:
+
+   ```bash
+   ./bump-version.sh patch    # 0.1.17 -> 0.1.18
+   ./bump-version.sh minor    # 0.1.17 -> 0.2.0
+   ./bump-version.sh major    # 0.1.17 -> 1.0.0
+   ./bump-version.sh 1.2.3    # explicit version
+   ```
+
+   The script updates all three version files and prompts:
+   `Create git commit and tag vX.Y.Z? [y/N]`. Answer **`y`** — it will
+   create a commit (`Bump version to X.Y.Z`) and an annotated tag (`vX.Y.Z`).
+3. Push the commit **and** the tag in the same step so the workflow kicks off:
+
+   ```bash
+   git push && git push --tags
+   ```
+
+   (or `git push origin main --follow-tags`)
+4. Watch the build at
+   [Actions → Release](https://github.com/theonlytruebigmac/nc-data-export-tool/actions/workflows/release.yml).
+   The workflow builds macOS (arm64 + x64), Linux, and Windows artifacts,
+   signs them for the Tauri updater, and publishes a draft GitHub Release.
+5. Open the [Releases](https://github.com/theonlytruebigmac/nc-data-export-tool/releases)
+   page, edit the draft to add release notes, and publish it.
+
+### If something goes wrong
+
+- **Workflow didn't start.** The trigger is the tag push, not the commit.
+  Run `git push --tags` (or re-push a specific tag:
+  `git push origin vX.Y.Z`).
+- **Wrong version tagged.** Delete the tag locally and on the remote
+  before re-bumping:
+
+  ```bash
+  git tag -d vX.Y.Z
+  git push origin :refs/tags/vX.Y.Z
+  ```
+
+- **Version files out of sync.** Re-run `bump-version.sh <explicit-version>`
+  with the version you intended; it rewrites all three files.
 
 ## License
 
