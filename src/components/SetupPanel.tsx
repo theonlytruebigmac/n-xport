@@ -55,11 +55,6 @@ function formatRelative(iso?: string): string | null {
   return new Date(iso).toLocaleDateString();
 }
 
-function profileBadge(profile: Profile): string {
-  if (profile.type === 'migration') return 'Migrate';
-  return 'Export';
-}
-
 export function SetupPanel({
   appMode,
   profiles,
@@ -171,7 +166,6 @@ export function SetupPanel({
                     {lastUsed && <div className="lastrun">Last used <strong style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>{lastUsed}</strong></div>}
                   </div>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <span className="badge">{profileBadge(profile)}</span>
                     <button
                       title="Delete profile"
                       style={{ background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}

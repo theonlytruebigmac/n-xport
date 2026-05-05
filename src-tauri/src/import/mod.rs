@@ -113,18 +113,21 @@ pub struct UserRoleImportRow {
 }
 
 /// CSV shape for the Users import.
+///
+/// N-central uses the email address as the login name — there is no separate
+/// username field — so this row exposes only `email` and the importer passes it
+/// to SOAP as both `<ei2:username>` and the `email` setting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserImportRow {
-    /// Required. Username / login name for the new user.
-    pub login_name: String,
-    /// Required. Email address (used for password reset).
+    /// Required. Email address — also used as the N-central login name.
     pub email: String,
     /// Required. First name.
     pub first_name: String,
     /// Required. Last name.
     pub last_name: String,
-    /// Required. Customer name where the user will be placed (use SO name for SO-level).
+    /// Required. Service org / customer / site name where the user will be placed.
+    /// Empty / "SO" / "Service Org" / the connected SO's name → SO level.
     pub customer_name: String,
     /// Semicolon-separated list of role names to assign.
     #[serde(default)]
@@ -132,7 +135,7 @@ pub struct UserImportRow {
     /// Semicolon-separated list of access group names to assign.
     #[serde(default)]
     pub access_group_names: Option<String>,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", deserialize_with = "deserialize_lenient_bool")]
     pub is_enabled: bool,
     #[serde(default)]
     pub phone: Option<String>,
@@ -144,6 +147,30 @@ pub struct UserImportRow {
 
 fn default_true() -> bool {
     true
+}
+
+/// Lenient bool deserializer for CSV cells: accepts empty (-> true), case-insensitive
+/// true/false/yes/no/1/0, and trims whitespace. Empty defaults to true so blank
+/// `isEnabled` columns in templates don't blow up the parse.
+fn deserialize_lenient_bool<'de, D>(deserializer: D) -> std::result::Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let raw = Option::<String>::deserialize(deserializer)?;
+    let s = raw.unwrap_or_default();
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(true);
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "y" | "1" | "t" => Ok(true),
+        "false" | "no" | "n" | "0" | "f" => Ok(false),
+        other => Err(D::Error::custom(format!(
+            "expected true/false (or yes/no, 1/0), got `{}`",
+            other
+        ))),
+    }
 }
 
 /// Resource types that this importer can handle.
@@ -231,7 +258,6 @@ pub fn write_template(resource: ImportResource, path: &Path) -> Result<()> {
             .map_err(|e| AppError::Export(format!("CSV write error: {}", e)))?,
         ImportResource::Users => writer
             .serialize(UserImportRow {
-                login_name: "jdoe".into(),
                 email: "jane@acme.example".into(),
                 first_name: "Jane".into(),
                 last_name: "Doe".into(),

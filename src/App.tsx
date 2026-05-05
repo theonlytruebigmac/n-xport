@@ -86,6 +86,28 @@ function App() {
     }
   }, []);
 
+  // Keep the source connection chip in sync with the SO dropdown while connected.
+  // Debounced so manual numeric typing doesn't fire a lookup per keystroke.
+  useEffect(() => {
+    if (connectionStatus !== 'connected') return;
+    if (!serviceOrgId || !/^\d+$/.test(serviceOrgId)) {
+      setConnectedServiceOrg(null);
+      return;
+    }
+    const id = parseInt(serviceOrgId, 10);
+    if (connectedServiceOrg?.id === id) return;
+    const handle = setTimeout(async () => {
+      try {
+        const info = await api.getServiceOrgInfo(id);
+        setConnectedServiceOrg({ id, name: info.name });
+      } catch {
+        setConnectedServiceOrg({ id, name: `SO ${id}` });
+      }
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [serviceOrgId, connectionStatus]);
+
+
   const loadProfiles = async () => {
     try {
       const profs = await api.getProfiles();
@@ -94,9 +116,7 @@ function App() {
       if (active) {
         setActiveProfile(active);
         setFqdn(active.source.fqdn);
-        if (active.source.serviceOrgId) {
-          setServiceOrgId(active.source.serviceOrgId.toString());
-        }
+        setServiceOrgId('');
 
         try {
           const storedJwt = await api.getCredentials(active.name);
@@ -108,12 +128,9 @@ function App() {
           // Ignore error loading creds
         }
 
-        if (active.type === 'migration' && active.destination) {
-          setAppMode('migrate');
+        if (active.destination) {
           setDestFqdn(active.destination.fqdn);
-          if (active.destination.serviceOrgId) {
-            setDestServiceOrgId(active.destination.serviceOrgId.toString());
-          }
+          setDestServiceOrgId('');
           setDestApiUsername(active.destination.username || '');
           try {
             const storedDestJwt = await api.getCredentials(`${active.name}_dest`);
@@ -183,29 +200,10 @@ function App() {
         setServerVersion(result.serverVersion || '');
         setServerUrl(result.serverUrl || fqdn);
 
-        let finalSoId = result.serviceOrgId;
-        let finalSoName = result.serviceOrgName;
-
-        if (serviceOrgId) {
-          const id = parseInt(serviceOrgId);
-          if (!isNaN(id)) {
-            finalSoId = id;
-            if (finalSoId !== result.serviceOrgId) {
-              try {
-                const info = await api.getServiceOrgInfo(finalSoId);
-                finalSoName = info.name;
-              } catch {
-                finalSoName = `Unknown (ID: ${finalSoId})`;
-              }
-            }
-          }
-        } else if (result.serviceOrgId) {
-          setServiceOrgId(result.serviceOrgId.toString());
-        }
-
-        if (finalSoId && finalSoName) {
-          setConnectedServiceOrg({ id: finalSoId, name: finalSoName });
-          addLog('info', `Target Service Org: ${finalSoName} (ID: ${finalSoId})`);
+        // Don't auto-populate the SO. The chip-sync effect updates the chip
+        // once the user picks one from the dropdown.
+        if (result.serviceOrgName) {
+          addLog('info', `Server's default SO is ${result.serviceOrgName} (ID: ${result.serviceOrgId}). Pick a target SO before continuing.`);
         }
 
         addLog('success', `Connected to ${result.serverUrl || fqdn}`);
@@ -288,22 +286,13 @@ function App() {
   const handleSelectProfile = async (profile: Profile) => {
     setActiveProfile(profile);
     setFqdn(profile.source.fqdn);
-    if (profile.source.serviceOrgId) {
-      setServiceOrgId(profile.source.serviceOrgId.toString());
-    } else {
-      setServiceOrgId('');
-    }
+    setServiceOrgId('');
 
-    if (profile.type === 'migration') {
-      setAppMode('migrate');
-      if (profile.destination) {
-        setDestFqdn(profile.destination.fqdn);
-        if (profile.destination.serviceOrgId) {
-          setDestServiceOrgId(profile.destination.serviceOrgId.toString());
-        }
-      }
-    } else {
-      setAppMode('export');
+    // Profiles are mode-agnostic — load source and (if present) destination
+    // data without changing appMode. The user picks the mode from Home.
+    if (profile.destination) {
+      setDestFqdn(profile.destination.fqdn);
+      setDestServiceOrgId('');
     }
 
     try {
@@ -324,7 +313,7 @@ function App() {
       setApiPassword('');
     }
 
-    if (profile.type === 'migration') {
+    if (profile.destination) {
       try {
         const storedDestJwt = await api.getCredentials(`${profile.name}_dest`);
         if (storedDestJwt) {
@@ -380,26 +369,8 @@ function App() {
           setServerVersion(result.serverVersion || '');
           setServerUrl(result.serverUrl || profile.source.fqdn);
 
-          let finalSoId = result.serviceOrgId;
-          let finalSoName = result.serviceOrgName;
-
-          if (profile.source.serviceOrgId) {
-            finalSoId = profile.source.serviceOrgId;
-            if (finalSoId !== result.serviceOrgId && finalSoId) {
-              try {
-                const info = await api.getServiceOrgInfo(finalSoId);
-                finalSoName = info.name;
-              } catch {
-                finalSoName = `Unknown (ID: ${finalSoId})`;
-              }
-            }
-          } else if (result.serviceOrgId) {
-            setServiceOrgId(result.serviceOrgId.toString());
-          }
-
-          if (finalSoId && finalSoName) {
-            setConnectedServiceOrg({ id: finalSoId, name: finalSoName });
-            addLog('info', `Target Service Org: ${finalSoName} (ID: ${finalSoId})`);
+          if (result.serviceOrgName) {
+            addLog('info', `Server's default SO is ${result.serviceOrgName} (ID: ${result.serviceOrgId}). Pick a target SO before continuing.`);
           }
 
           addLog('success', `Connected to ${result.serverUrl || profile.source.fqdn}`);
@@ -491,7 +462,10 @@ function App() {
     setCurrentStep('exporting');
     setProgress(null);
     setLastImportResult(null);
-    addLog('info', `Starting ${dryRun ? 'dry-run import' : 'live import'}: ${importResource} from ${importCsvPath}`);
+    const targetLabel = connectedServiceOrg
+      ? `${connectedServiceOrg.name} (ID: ${connectedServiceOrg.id})`
+      : `SO ${serviceOrgId}`;
+    addLog('info', `Starting ${dryRun ? 'dry-run import' : 'live import'}: ${importResource} into ${targetLabel} from ${importCsvPath}`);
 
     try {
       const result = await api.startImport(importResource, importCsvPath, parseInt(serviceOrgId), dryRun);

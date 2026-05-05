@@ -22,10 +22,15 @@ use crate::models::*;
 /// Pre-fetched lookup data needed across most handlers.
 pub struct ImportContext {
     pub source_so_id: i64,
+    /// Connected SO's name, lowercased. Used so users can put the SO name in
+    /// `customerName` to place a user at SO level.
+    pub source_so_name: Option<String>,
     /// customer name (lowercase) -> customer id
     pub customers_by_name: HashMap<String, i64>,
     /// (customer name lowercase, site name lowercase) -> site id
     pub sites_by_name: HashMap<(String, String), i64>,
+    /// site name only (lowercase) -> site id. First-seen wins on collisions.
+    pub sites_by_name_flat: HashMap<String, i64>,
     /// role name (lowercase) -> role id (any OU; first-seen wins)
     pub roles_by_name: HashMap<String, i64>,
     /// group name (lowercase) -> group id (any OU; first-seen wins)
@@ -48,20 +53,22 @@ impl ImportContext {
 
         // Build (customer_name, site_name) -> site_id map. Sites only carry parent IDs,
         // so we resolve the parent customer's name from the just-fetched customer list.
+        // Also build a flat site-name -> id map for the user importer's relaxed lookup
+        // (first-seen wins when site names collide across customers).
         let mut sites_by_name = HashMap::new();
+        let mut sites_by_name_flat: HashMap<String, i64> = HashMap::new();
         let cust_id_to_name: HashMap<i64, String> = customers
             .iter()
             .map(|c| (c.customer_id, c.customer_name.to_lowercase()))
             .collect();
         if let Ok(sites) = client.get_sites_by_so(source_so_id).await {
             for s in sites {
+                let site_key = s.site_name.to_lowercase();
+                sites_by_name_flat.entry(site_key.clone()).or_insert(s.site_id);
                 let parent_id = s.parent_id.or(s.customer_id).or(s.customerid);
                 if let Some(pid) = parent_id {
                     if let Some(parent_name) = cust_id_to_name.get(&pid) {
-                        sites_by_name.insert(
-                            (parent_name.clone(), s.site_name.to_lowercase()),
-                            s.site_id,
-                        );
+                        sites_by_name.insert((parent_name.clone(), site_key), s.site_id);
                     }
                 }
             }
@@ -98,10 +105,20 @@ impl ImportContext {
         let perm_csv = include_str!("../../rolePermissionIds.csv");
         let permission_lookup = PermissionLookup::from_csv(perm_csv);
 
+        // Best-effort fetch of the connected SO's name so users can put the SO
+        // name in the user-import `customerName` column.
+        let source_so_name = client
+            .get_service_org_by_id(source_so_id)
+            .await
+            .ok()
+            .map(|so| so.so_name.to_lowercase());
+
         Ok(Self {
             source_so_id,
+            source_so_name,
             customers_by_name,
             sites_by_name,
+            sites_by_name_flat,
             roles_by_name,
             groups_by_name,
             permission_lookup,
@@ -722,34 +739,47 @@ pub async fn import_user(
     dry_run: bool,
     _app: &AppHandle,
 ) -> RowOutcome {
-    let login = row.login_name.trim();
+    // N-central uses the email as the login name. The CSV intentionally has no
+    // separate loginName column — `email` is both.
+    let login = row.email.trim();
     if login.is_empty() {
         return RowOutcome {
             row_number,
             status: RowStatus::Error,
             label: format!("(row {})", row_number),
-            message: "loginName is required".into(),
+            message: "email is required".into(),
         };
     }
 
+    // Resolve the customerName column against the connected SO (recommended),
+    // a customer under it, or a site. Sentinels "SO" / "Service Org" and an
+    // empty value also place the user at SO level.
     let cust_name = row.customer_name.trim();
-    let dest_ou = if cust_name.eq_ignore_ascii_case("SO")
+    let cust_key = cust_name.to_lowercase();
+    let (dest_ou, scope_label) = if cust_name.is_empty()
+        || cust_name.eq_ignore_ascii_case("SO")
         || cust_name.eq_ignore_ascii_case("Service Org")
-        || cust_name.is_empty()
+        || ctx
+            .source_so_name
+            .as_deref()
+            .map(|n| n == cust_key)
+            .unwrap_or(false)
     {
-        ctx.source_so_id
+        (ctx.source_so_id, "SO".to_string())
+    } else if let Some(&id) = ctx.customers_by_name.get(&cust_key) {
+        (id, format!("customer '{}'", cust_name))
+    } else if let Some(&id) = ctx.sites_by_name_flat.get(&cust_key) {
+        (id, format!("site '{}'", cust_name))
     } else {
-        match ctx.customers_by_name.get(&cust_name.to_lowercase()) {
-            Some(&id) => id,
-            None => {
-                return RowOutcome {
-                    row_number,
-                    status: RowStatus::Error,
-                    label: login.to_string(),
-                    message: format!("customerName '{}' not found", cust_name),
-                }
-            }
-        }
+        return RowOutcome {
+            row_number,
+            status: RowStatus::Error,
+            label: login.to_string(),
+            message: format!(
+                "customerName '{}' did not match any service org, customer, or site under the connected SO",
+                cust_name
+            ),
+        };
     };
 
     // Resolve role names
@@ -813,7 +843,8 @@ pub async fn import_user(
             status: RowStatus::Planned,
             label: login.to_string(),
             message: format!(
-                "Would create user at OU {} with {} role(s), {} group(s){}",
+                "Would create user at {} (OU {}) with {} role(s), {} group(s){}",
+                scope_label,
                 dest_ou,
                 role_ids.len(),
                 group_ids.len(),
@@ -852,7 +883,7 @@ pub async fn import_user(
             row_number,
             status: RowStatus::Created,
             label: login.to_string(),
-            message: format!("Created user (ID: {})", id),
+            message: format!("Created user (ID: {}) at {} (OU {})", id, scope_label, dest_ou),
         },
         Ok(id) => RowOutcome {
             row_number,
