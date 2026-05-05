@@ -1,15 +1,27 @@
 import { useRef, useEffect, useState } from 'react';
-import type { ProgressUpdate, LogEntry } from '../types';
+import type { ProgressUpdate, LogEntry, ImportResult } from '../types';
 
 interface ProgressPanelProps {
     currentStep: 'exporting' | 'complete';
-    appMode: 'export' | 'migrate';
+    appMode: 'export' | 'migrate' | 'import';
     progress: ProgressUpdate | null;
     logs: LogEntry[];
     addLog: (level: LogEntry['level'], message: string) => void;
     onOpenOutput: () => void;
     onNewExport: () => void;
     onCancel: () => void;
+    /** Last import result, used to render summary chips and the Apply-for-real strip. */
+    lastImportResult?: ImportResult | null;
+    /** Connected SO display name (for Apply-for-real strip context). */
+    targetSoLabel?: string;
+    /** Triggers a re-run of the last import config with dryRun=false. */
+    onApplyForReal?: () => void;
+}
+
+interface ChipDef {
+    label: string;
+    count: number;
+    cls: string;
 }
 
 export function ProgressPanel({
@@ -21,6 +33,9 @@ export function ProgressPanel({
     onOpenOutput,
     onNewExport,
     onCancel,
+    lastImportResult,
+    targetSoLabel,
+    onApplyForReal,
 }: ProgressPanelProps) {
     const logRef = useRef<HTMLDivElement>(null);
     const [verboseLogging, setVerboseLogging] = useState(false);
@@ -31,13 +46,43 @@ export function ProgressPanel({
         }
     }, [logs]);
 
+    const isImport = appMode === 'import';
+    const isComplete = currentStep === 'complete';
+    const isDryRun = isImport && lastImportResult?.dryRun === true;
+    const showApplyStrip = isComplete && isImport && isDryRun && lastImportResult && (lastImportResult.rowsPlanned > 0);
+
+    const chips: ChipDef[] | null = lastImportResult
+        ? [
+            isDryRun
+                ? { label: 'Would create', count: lastImportResult.rowsPlanned, cls: 'planned' }
+                : { label: 'Created', count: lastImportResult.rowsCreated, cls: 'created' },
+            { label: isDryRun ? 'Would skip' : 'Skipped', count: lastImportResult.rowsSkipped, cls: 'skipped' },
+            { label: isDryRun ? 'Would error' : 'Errored', count: lastImportResult.rowsErrored, cls: 'errored' },
+            { label: 'Total rows', count: lastImportResult.rowsTotal, cls: '' },
+        ]
+        : null;
+
     return (
         <div className="card fade-in">
             <div className="card-header">
                 <h2 className="card-title">
-                    {currentStep === 'exporting' ? (appMode === 'migrate' ? 'Migrating...' : 'Exporting...') : 'Complete'}
+                    {currentStep === 'exporting'
+                        ? (appMode === 'migrate' ? 'Migrating…' : isImport ? (isDryRun ? 'Dry-running…' : 'Importing…') : 'Exporting…')
+                        : (isImport && isDryRun ? 'Dry-run complete' : 'Complete')}
                 </h2>
             </div>
+
+            {/* Summary chips — only for import runs that have completed */}
+            {chips && isComplete && (
+                <div className="summary-grid">
+                    {chips.map(c => (
+                        <div key={c.label} className={`stat ${c.cls}`}>
+                            <div className="count">{c.count}</div>
+                            <div className="label">{c.label}</div>
+                        </div>
+                    ))}
+                </div>
+            )}
 
             {progress && (
                 <div className="progress-container large">
@@ -115,15 +160,31 @@ export function ProgressPanel({
                 </div>
             </div>
 
+            {/* Apply-for-real confirmation strip (only after a successful dry-run with planned rows) */}
+            {showApplyStrip && (
+                <div className="confirm-strip">
+                    <div className="icon">⚠</div>
+                    <div className="text">
+                        <strong>{lastImportResult.rowsPlanned} row{lastImportResult.rowsPlanned === 1 ? '' : 's'}</strong> will be created
+                        {targetSoLabel && (<> in <strong>{targetSoLabel}</strong></>)}.
+                        {lastImportResult.rowsErrored > 0 && (<> {lastImportResult.rowsErrored} row{lastImportResult.rowsErrored === 1 ? '' : 's'} had errors and will be skipped.</>)}
+                        {' '}This writes to the live server.
+                    </div>
+                    <button className="btn-danger" onClick={onApplyForReal}>
+                        Apply for real →<span className="kbd">⌘↵</span>
+                    </button>
+                </div>
+            )}
+
             {currentStep === 'complete' && (
                 <div style={{ display: 'flex', gap: 'var(--space-md)', marginTop: 'var(--space-xl)' }}>
-                    {appMode !== 'migrate' && (
+                    {appMode === 'export' && (
                         <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={onOpenOutput}>
                             View Export Folder
                         </button>
                     )}
                     <button className="btn btn-secondary btn-lg" style={{ flex: 1 }} onClick={onNewExport}>
-                        {appMode === 'migrate' ? 'New Migration' : 'Start New Export'}
+                        {appMode === 'migrate' ? 'New Migration' : isImport ? (isDryRun ? 'Edit configuration' : 'Run another import') : 'Start New Export'}
                     </button>
                 </div>
             )}

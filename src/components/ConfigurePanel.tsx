@@ -1,4 +1,5 @@
 import type { ExportType } from '../types';
+import { ServiceOrgCombobox } from './ServiceOrgCombobox';
 
 interface ConfigurePanelProps {
     appMode: 'export' | 'migrate';
@@ -13,6 +14,8 @@ interface ConfigurePanelProps {
     onToggleFormat: (format: string) => void;
     onBrowseOutput: () => void;
     onBack: () => void;
+    /** Optional, used to display the SO name immediately while the discovery list loads. */
+    connectedServiceOrgName?: string;
 }
 
 export function ConfigurePanel({
@@ -26,6 +29,7 @@ export function ConfigurePanel({
     onToggleFormat,
     onBrowseOutput,
     onBack,
+    connectedServiceOrgName,
 }: ConfigurePanelProps) {
     return (
         <div className="card card-compact fade-in">
@@ -36,8 +40,14 @@ export function ConfigurePanel({
             <div className="grid-2">
                 {appMode !== 'migrate' && (
                     <div className="form-group">
-                        <label className="form-label">Target Service Org ID</label>
-                        <input type="number" className="form-input" value={serviceOrgId} onChange={e => setServiceOrgId(e.target.value)} />
+                        <label className="form-label">Target Service Org</label>
+                        <ServiceOrgCombobox
+                            value={serviceOrgId}
+                            onChange={setServiceOrgId}
+                            enabled={true}
+                            initialName={connectedServiceOrgName}
+                            placeholder="Select or type a service org…"
+                        />
                     </div>
                 )}
                 {appMode !== 'migrate' && (

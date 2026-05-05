@@ -13,6 +13,8 @@ use crate::credentials::CredentialStore;
 /// Shared client state
 pub struct AppState {
     pub client: Arc<Mutex<Option<NcClient>>>,
+    /// SOAP client for source (for operations not available via REST, e.g. user_add during import)
+    pub source_soap_client: Arc<Mutex<Option<NcSoapClient>>>,
     pub dest_client: Arc<Mutex<Option<NcClient>>>,
     /// SOAP client for destination (for operations not available via REST)
     pub dest_soap_client: Arc<Mutex<Option<NcSoapClient>>>,
@@ -24,6 +26,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             client: Arc::new(Mutex::new(None)),
+            source_soap_client: Arc::new(Mutex::new(None)),
             dest_client: Arc::new(Mutex::new(None)),
             dest_soap_client: Arc::new(Mutex::new(None)),
             cancel_token: Arc::new(AtomicBool::new(false)),
@@ -122,12 +125,26 @@ async fn establish_connection(
 pub async fn test_connection(
     fqdn: String,
     jwt: String,
-    _username: Option<String>,
+    username: Option<String>,
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
+    let base_url = format!(
+        "https://{}",
+        fqdn.trim_start_matches("https://")
+            .trim_start_matches("http://")
+    );
+
     match establish_connection(&fqdn, &jwt).await {
         Ok((client, result)) => {
             *state.client.lock().await = Some(client);
+
+            // Initialize & store SOAP client for source (used by import for user_add etc.)
+            let mut soap_client = NcSoapClient::new(&base_url, jwt.trim());
+            if let Some(u) = username {
+                soap_client.set_username(&u);
+            }
+            *state.source_soap_client.lock().await = Some(soap_client);
+
             Ok(result)
         }
         Err(result) => Ok(result),
@@ -312,7 +329,9 @@ pub async fn get_password(profile_name: String) -> std::result::Result<Option<St
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>) -> std::result::Result<(), String> {
     *state.client.lock().await = None;
+    *state.source_soap_client.lock().await = None;
     *state.dest_client.lock().await = None;
+    *state.dest_soap_client.lock().await = None;
     Ok(())
 }
 
@@ -335,5 +354,27 @@ pub async fn get_service_org_info(
             "name": so.so_name
         })),
         Err(e) => Err(format!("Failed to get service org: {}", e)),
+    }
+}
+
+/// List all service organizations the connected user can see.
+/// Used by the SO combobox to populate the typeahead.
+#[tauri::command]
+pub async fn list_service_orgs(
+    state: State<'_, AppState>,
+) -> std::result::Result<Vec<serde_json::Value>, String> {
+    let client = state.client.lock().await;
+
+    let client = match &*client {
+        Some(c) => c,
+        None => return Err("Not connected".to_string()),
+    };
+
+    match client.get_service_orgs().await {
+        Ok(sos) => Ok(sos
+            .into_iter()
+            .map(|so| serde_json::json!({ "id": so.so_id, "name": so.so_name }))
+            .collect()),
+        Err(e) => Err(format!("Failed to list service orgs: {}", e)),
     }
 }

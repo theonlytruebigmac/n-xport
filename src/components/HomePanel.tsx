@@ -2,12 +2,13 @@ interface HomePanelProps {
     appVersion: string;
     onSelectExport: () => void;
     onSelectMigrate: () => void;
+    onSelectImport: () => void;
 }
 
-export function HomePanel({ appVersion, onSelectExport, onSelectMigrate }: HomePanelProps) {
+export function HomePanel({ appVersion, onSelectExport, onSelectMigrate, onSelectImport }: HomePanelProps) {
     return (
         <div className="centered-dashboard fade-in" style={{
-            maxWidth: 750,
+            maxWidth: 1000,
             margin: '0 auto',
             paddingTop: 'var(--space-lg)',
             display: 'flex',
@@ -24,29 +25,38 @@ export function HomePanel({ appVersion, onSelectExport, onSelectMigrate }: HomeP
                     <span style={{ color: 'var(--color-accent)' }}>N-xport</span> Data Tool
                 </h1>
                 <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9375rem' }}>
-                    Export or migrate data between N-Central servers
+                    Export, import, or migrate data between N-Central servers
                 </p>
             </div>
 
             <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(2, 1fr)',
+                gridTemplateColumns: 'repeat(3, 1fr)',
                 gap: 'var(--space-lg)',
                 flex: 1,
                 minHeight: 280
             }}>
-                {/* Export Card */}
+                {/* Export Card — recommended */}
                 <ModeCard
                     title="Export Data"
-                    description="Export customers, sites, users, and devices to CSV or JSON"
+                    description="Pull customers, sites, users, and devices into CSV or JSON."
                     accentColor="var(--color-accent)"
                     onClick={onSelectExport}
+                    recommended
+                />
+
+                {/* Import Card */}
+                <ModeCard
+                    title="Import Data"
+                    description="Load customers, sites, access groups, roles, and users from a CSV."
+                    accentColor="var(--color-warning, #fbbf24)"
+                    onClick={onSelectImport}
                 />
 
                 {/* Migration Card */}
                 <ModeCard
                     title="Migrate Data"
-                    description="Transfer customers, users, roles, and properties between servers"
+                    description="Copy customers, users, roles, and properties between two N-central servers."
                     accentColor="var(--color-success)"
                     onClick={onSelectMigrate}
                 />
@@ -65,34 +75,29 @@ export function HomePanel({ appVersion, onSelectExport, onSelectMigrate }: HomeP
     );
 }
 
-function ModeCard({ title, description, accentColor, onClick }: {
+function ModeCard({ title, description, accentColor, onClick, recommended }: {
     title: string;
     description: string;
     accentColor: string;
     onClick: () => void;
+    recommended?: boolean;
 }) {
     return (
         <div
-            className="card"
+            className={`card mode-card${recommended ? ' recommended' : ''}`}
             onClick={onClick}
             style={{
                 cursor: 'pointer',
                 padding: 0,
                 overflow: 'hidden',
-                transition: 'all 0.2s ease',
                 border: '1px solid var(--color-border)',
                 display: 'flex',
-                flexDirection: 'column'
-            }}
-            onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = accentColor;
-                e.currentTarget.style.transform = 'translateY(-2px)';
-            }}
-            onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'var(--color-border)';
-                e.currentTarget.style.transform = 'translateY(0)';
+                flexDirection: 'column',
+                position: 'relative',
+                ['--mode-accent' as string]: accentColor,
             }}
         >
+            {recommended && <span className="recommended-pill">Most common</span>}
             <div style={{ height: 4, background: accentColor }} />
             <div style={{
                 padding: 'var(--space-xl)',
@@ -113,7 +118,7 @@ function ModeCard({ title, description, accentColor, onClick }: {
                     color: 'var(--color-text-muted)',
                     fontSize: '0.875rem',
                     lineHeight: 1.5,
-                    maxWidth: 220
+                    maxWidth: 240
                 }}>
                     {description}
                 </p>

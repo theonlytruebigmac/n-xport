@@ -8,6 +8,7 @@ import { UpdateBanner } from './useUpdateChecker';
 import { HomePanel } from './components/HomePanel';
 import { SetupPanel } from './components/SetupPanel';
 import { ConfigurePanel } from './components/ConfigurePanel';
+import { ImportPanel } from './components/ImportPanel';
 import { ProgressPanel } from './components/ProgressPanel';
 import { NewProfileModal } from './components/NewProfileModal';
 import type {
@@ -23,7 +24,7 @@ import type {
 function App() {
   // Connection state
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
-  const [serverVersion, setServerVersion] = useState<string>('');
+  const [, setServerVersion] = useState<string>('');
   const [serverUrl, setServerUrl] = useState<string>('');
   const [connectedServiceOrg, setConnectedServiceOrg] = useState<{ id: number, name: string } | null>(null);
 
@@ -53,11 +54,17 @@ function App() {
 
   // Workflow state
   const [currentStep, setCurrentStep] = useState<'home' | 'setup' | 'configure' | 'exporting' | 'complete'>('home');
-  const [appMode, setAppMode] = useState<'export' | 'migrate'>('export');
+  const [appMode, setAppMode] = useState<'export' | 'migrate' | 'import'>('export');
+
+  // Import state
+  const [importCsvPath, setImportCsvPath] = useState<string>('');
+  const [importResource, setImportResource] = useState<string>('customers');
+  const [importDryRun, setImportDryRun] = useState<boolean>(true);
+  const [lastImportResult, setLastImportResult] = useState<import('./types').ImportResult | null>(null);
 
   // Destination state (for migration)
   const [destConnectionStatus, setDestConnectionStatus] = useState<ConnectionStatus>('disconnected');
-  const [destServerVersion, setDestServerVersion] = useState<string>('');
+  const [, setDestServerVersion] = useState<string>('');
   const [destServerUrl, setDestServerUrl] = useState<string>('');
   const [destConnectedServiceOrg, setDestConnectedServiceOrg] = useState<{ id: number, name: string } | null>(null);
   const [destFqdn, setDestFqdn] = useState('');
@@ -136,6 +143,10 @@ function App() {
 
   const setupEventListeners = () => {
     listen<ProgressUpdate>('export-progress', (event) => {
+      setProgress(event.payload);
+      addLog('info', `${event.payload.phase}: ${event.payload.message}`);
+    });
+    listen<ProgressUpdate>('import-progress', (event) => {
       setProgress(event.payload);
       addLog('info', `${event.payload.phase}: ${event.payload.message}`);
     });
@@ -218,6 +229,12 @@ function App() {
     await api.disconnect();
     setConnectionStatus('disconnected');
     setServerVersion('');
+    setServerUrl('');
+    setConnectedServiceOrg(null);
+    setDestConnectionStatus('disconnected');
+    setDestServerVersion('');
+    setDestServerUrl('');
+    setDestConnectedServiceOrg(null);
     addLog('info', 'Disconnected');
     setCurrentStep('setup');
   };
@@ -464,6 +481,33 @@ function App() {
     }
   };
 
+  const handleImport = async (overrideDryRun?: boolean) => {
+    if (!serviceOrgId) { addLog('error', 'Please enter Service Organization ID'); return; }
+    if (!importCsvPath) { addLog('error', 'Please select a CSV file'); return; }
+    if (!importResource) { addLog('error', 'Please select a resource to import'); return; }
+
+    const dryRun = overrideDryRun !== undefined ? overrideDryRun : importDryRun;
+
+    setCurrentStep('exporting');
+    setProgress(null);
+    setLastImportResult(null);
+    addLog('info', `Starting ${dryRun ? 'dry-run import' : 'live import'}: ${importResource} from ${importCsvPath}`);
+
+    try {
+      const result = await api.startImport(importResource, importCsvPath, parseInt(serviceOrgId), dryRun);
+      setLastImportResult(result);
+      addLog(result.success ? 'success' : 'warning', result.message);
+    } catch (e) {
+      addLog('error', `Import failed: ${e}`);
+    } finally {
+      setCurrentStep('complete');
+    }
+  };
+
+  const handleApplyForReal = () => {
+    void handleImport(false);
+  };
+
   const handleMigrate = async () => {
     if (!serviceOrgId || !destConnectedServiceOrg) {
       addLog('error', 'Please ensure both Source and Destination Service Org IDs are available');
@@ -519,68 +563,84 @@ function App() {
 
   return (
     <div className="app">
-      {/* Header - only show when not on home page */}
+      {/* Slim header strip — only shown after the home page */}
       {currentStep !== 'home' && (
         <header className="header">
           <div className="header-title">
-            <h1><span className="header-accent">N-xport</span> Data Tool</h1>
+            <h1
+              onClick={() => setCurrentStep('home')}
+              style={{ cursor: 'pointer' }}
+              title="Back to Home"
+            >
+              <span className="header-accent">N-xport</span>
+            </h1>
             <span className="badge" style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>v{appVersion}</span>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setCurrentStep('home')}
+              style={{ padding: '4px 10px', fontSize: '0.8125rem', marginLeft: 8 }}
+              title="Back to Home"
+            >
+              ← Home
+            </button>
           </div>
-          <div className="header-actions">
-            <div className="header-status">
-              {appMode === 'migrate' ? (
-                <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-                    <span className="badge badge-info">Source</span>
-                    <div className={`status-indicator ${connectionStatus === 'connected' ? 'connected' : ''}`} />
-                    <span className="form-label" style={{ marginBottom: 0, fontSize: '0.75rem' }}>
-                      {serverUrl || (connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected')}
-                      {serverVersion && ` (v${serverVersion})`}
-                    </span>
-                  </div>
-                  <div style={{ height: '16px', width: '1px', background: 'var(--color-border)' }} />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-                    <span className="badge badge-info">Dest</span>
-                    <div className={`status-indicator ${destConnectionStatus === 'connected' ? 'connected' : ''}`} />
-                    <span className="form-label" style={{ marginBottom: 0, fontSize: '0.75rem' }}>
-                      {destServerUrl || (destConnectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected')}
-                      {destServerVersion && ` (v${destServerVersion})`}
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className={`status-indicator ${connectionStatus === 'connected' ? 'connected' : ''}`} />
-                  <span className="form-label" style={{ marginBottom: 0, fontSize: '0.8125rem' }}>
-                    {connectionStatus === 'connected'
-                      ? `${serverUrl || 'Connected'} ${connectedServiceOrg ? `· ${connectedServiceOrg.name}` : ''}`
-                      : connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
-                  </span>
-                  {serverVersion && (
-                    <span className="badge badge-info" style={{ marginLeft: 'var(--space-sm)' }}>v{serverVersion}</span>
-                  )}
-                </>
-              )}
-            </div>
+          <div className="header-actions" style={{ gap: 12 }}>
+            {appMode === 'migrate' ? (
+              <>
+                <span className={`conn-chip ${connectionStatus === 'connected' ? '' : 'disconnected'}`}>
+                  <span className="dot" />
+                  Source · {connectionStatus === 'connected' ? (serverUrl || 'Connected') : connectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+                </span>
+                <span className={`conn-chip ${destConnectionStatus === 'connected' ? '' : 'disconnected'}`}>
+                  <span className="dot" />
+                  Dest · {destConnectionStatus === 'connected' ? (destServerUrl || 'Connected') : destConnectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+                </span>
+              </>
+            ) : (
+              <span className={`conn-chip ${connectionStatus === 'connected' ? '' : 'disconnected'}`}>
+                <span className="dot" />
+                {connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'connecting' ? 'Connecting…' : 'Disconnected'}
+                {connectedServiceOrg && (
+                  <>
+                    <span className="sep" />
+                    <span className="so">{connectedServiceOrg.name} · {connectedServiceOrg.id}</span>
+                  </>
+                )}
+                {connectionStatus === 'connected' && (
+                  <button className="disconnect" onClick={handleDisconnect} title="Disconnect">×</button>
+                )}
+              </span>
+            )}
 
             {currentStep !== 'exporting' && currentStep !== 'complete' && (
               <button
                 className="btn btn-primary"
-                style={{ fontWeight: 700, minWidth: '120px' }}
+                style={{ fontWeight: 600, minWidth: '140px' }}
                 onClick={() => {
                   if (currentStep === 'setup') setCurrentStep('configure');
                   else if (currentStep === 'configure') {
                     if (appMode === 'migrate') handleMigrate();
+                    else if (appMode === 'import') void handleImport();
                     else handleExport();
                   }
                 }}
                 disabled={
                   currentStep === 'setup'
                     ? (appMode === 'migrate' ? (connectionStatus !== 'connected' || destConnectionStatus !== 'connected') : connectionStatus !== 'connected')
-                    : (appMode === 'migrate' ? (!serviceOrgId || !destConnectedServiceOrg) : (!serviceOrgId || !outputDir))
+                    : (appMode === 'migrate'
+                        ? (!serviceOrgId || !destConnectedServiceOrg)
+                        : appMode === 'import'
+                          ? (!serviceOrgId || !importCsvPath || !importResource)
+                          : (!serviceOrgId || !outputDir))
                 }
               >
-                {currentStep === 'setup' ? 'Next: Configure' : (appMode === 'migrate' ? 'Start Migration' : 'Start Export')}
+                {currentStep === 'setup'
+                  ? <>Continue<span className="kbd">↵</span></>
+                  : appMode === 'migrate'
+                    ? <>Start migration<span className="kbd">↵</span></>
+                    : appMode === 'import'
+                      ? (importDryRun ? <>Run dry-run<span className="kbd">↵</span></> : <>Start import<span className="kbd">↵</span></>)
+                      : <>Start export<span className="kbd">↵</span></>}
               </button>
             )}
           </div>
@@ -596,25 +656,38 @@ function App() {
               appVersion={appVersion}
               onSelectExport={() => { setAppMode('export'); setCurrentStep('setup'); }}
               onSelectMigrate={() => { setAppMode('migrate'); setCurrentStep('setup'); }}
+              onSelectImport={() => { setAppMode('import'); setCurrentStep('setup'); }}
             />
           )}
 
-          {/* Workflow Indicator */}
+          {/* Step pips — clickable to jump back to a completed step */}
           {currentStep !== 'home' && (
-            <div className="step-indicator">
-              <div className={`step-item ${currentStep === 'setup' ? 'active' : 'completed'}`}>
-                <div className="step-number">1</div>
-                <div className="step-label">Setup</div>
-              </div>
-              <div className={`step-line ${['configure', 'exporting', 'complete'].includes(currentStep) ? 'active' : ''}`} />
-              <div className={`step-item ${currentStep === 'configure' ? 'active' : ['exporting', 'complete'].includes(currentStep) ? 'completed' : ''}`}>
-                <div className="step-number">2</div>
-                <div className="step-label">Configure</div>
-              </div>
-              <div className={`step-line ${['exporting', 'complete'].includes(currentStep) ? 'active' : ''}`} />
-              <div className={`step-item ${['exporting', 'complete'].includes(currentStep) ? 'active' : ''}`}>
-                <div className="step-number">3</div>
-                <div className="step-label">Export</div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+              <div className="step-pips" title="Click any completed step to jump back">
+                <button
+                  className={`pip ${currentStep === 'setup' ? 'current' : 'done'}`}
+                  onClick={() => setCurrentStep('setup')}
+                >
+                  <span className="dot" />Setup
+                </button>
+                <button
+                  className={`pip ${
+                    currentStep === 'configure' ? 'current'
+                      : ['exporting', 'complete'].includes(currentStep) ? 'done'
+                      : 'future'
+                  }`}
+                  onClick={() => {
+                    if (['exporting', 'complete'].includes(currentStep)) setCurrentStep('configure');
+                  }}
+                >
+                  <span className="dot" />Configure
+                </button>
+                <button
+                  className={`pip ${['exporting', 'complete'].includes(currentStep) ? 'current' : 'future'}`}
+                >
+                  <span className="dot" />
+                  {appMode === 'migrate' ? 'Migrate' : appMode === 'import' ? 'Import' : 'Export'}
+                </button>
               </div>
             </div>
           )}
@@ -627,9 +700,9 @@ function App() {
               fqdn={fqdn} setFqdn={setFqdn}
               jwt={jwt} setJwt={setJwt}
               apiUsername={apiUsername} setApiUsername={setApiUsername}
-              apiPassword={apiPassword} setApiPassword={setApiPassword}
               serviceOrgId={serviceOrgId} setServiceOrgId={setServiceOrgId}
               connectionStatus={connectionStatus}
+              connectedServiceOrg={connectedServiceOrg}
               destFqdn={destFqdn} setDestFqdn={setDestFqdn}
               destJwt={destJwt} setDestJwt={setDestJwt}
               destApiUsername={destApiUsername} setDestApiUsername={setDestApiUsername}
@@ -639,19 +712,19 @@ function App() {
               setDestServerUrl={setDestServerUrl}
               setDestServerVersion={setDestServerVersion}
               setDestConnectedServiceOrg={setDestConnectedServiceOrg}
+              destConnectedServiceOrg={destConnectedServiceOrg}
               onConnect={handleConnect}
               onSelectProfile={handleSelectProfile}
               onShowNewProfile={() => setShowNewProfile(true)}
-              onBack={() => setCurrentStep('home')}
               addLog={addLog}
               loadProfiles={loadProfiles}
               setActiveProfile={setActiveProfile}
             />
           )}
 
-          {currentStep === 'configure' && (
+          {currentStep === 'configure' && appMode !== 'import' && (
             <ConfigurePanel
-              appMode={appMode}
+              appMode={appMode as 'export' | 'migrate'}
               serviceOrgId={serviceOrgId} setServiceOrgId={setServiceOrgId}
               outputDir={outputDir} setOutputDir={setOutputDir}
               exportTypes={exportTypes}
@@ -661,6 +734,23 @@ function App() {
               onToggleFormat={toggleFormat}
               onBrowseOutput={handleBrowseOutput}
               onBack={() => setCurrentStep('setup')}
+              connectedServiceOrgName={connectedServiceOrg?.name}
+            />
+          )}
+
+          {currentStep === 'configure' && appMode === 'import' && (
+            <ImportPanel
+              serviceOrgId={serviceOrgId}
+              setServiceOrgId={setServiceOrgId}
+              csvPath={importCsvPath}
+              setCsvPath={setImportCsvPath}
+              selectedResource={importResource}
+              setSelectedResource={setImportResource}
+              dryRun={importDryRun}
+              setDryRun={setImportDryRun}
+              onBack={() => setCurrentStep('setup')}
+              addLog={addLog}
+              connectedServiceOrgName={connectedServiceOrg?.name}
             />
           )}
 
@@ -677,25 +767,13 @@ function App() {
                 addLog('warning', 'Cancellation requested...');
                 await api.cancelExport();
               }}
+              lastImportResult={lastImportResult}
+              targetSoLabel={connectedServiceOrg ? `${connectedServiceOrg.name} (${connectedServiceOrg.id})` : (serviceOrgId ? `SO ${serviceOrgId}` : undefined)}
+              onApplyForReal={handleApplyForReal}
             />
           )}
         </main>
       </div>
-
-      {/* Connection Drawer */}
-      {connectionStatus === 'connected' && currentStep !== 'setup' && (
-        <div className="connection-fixed-status">
-          <div className="status-indicator connected" />
-          <span onClick={() => setCurrentStep('setup')}>Connected to {serverUrl}</span>
-          <button
-            className="btn btn-ghost"
-            style={{ padding: '0 4px', marginLeft: 'var(--space-sm)', color: 'var(--color-error)' }}
-            onClick={handleDisconnect}
-          >
-            Disconnect
-          </button>
-        </div>
-      )}
 
       {/* New Profile Modal */}
       {showNewProfile && (

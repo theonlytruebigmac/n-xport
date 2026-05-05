@@ -9,6 +9,7 @@ pub mod config;
 pub mod credentials;
 pub mod error;
 pub mod export;
+pub mod import;
 pub mod models;
 
 pub use error::{AppError, Result};
@@ -48,6 +49,7 @@ pub fn run() {
             commands::delete_credentials,
             commands::disconnect,
             commands::get_service_org_info,
+            commands::list_service_orgs,
             commands::connect_destination,
             // Config commands
             commands::get_settings,
@@ -62,6 +64,10 @@ pub fn run() {
             commands::get_export_types,
             commands::open_directory,
             commands::cancel_export,
+            // Import commands
+            commands::start_import,
+            commands::generate_template,
+            commands::get_import_types,
             // Migration commands
             commands::start_migration,
         ])

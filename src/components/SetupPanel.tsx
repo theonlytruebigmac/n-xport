@@ -1,23 +1,22 @@
 import type { Profile, ConnectionStatus, LogEntry } from '../types';
 import * as api from '../api';
+import { ServiceOrgCombobox } from './ServiceOrgCombobox';
 
 interface SetupPanelProps {
-  appMode: 'export' | 'migrate';
+  appMode: 'export' | 'migrate' | 'import';
   profiles: Profile[];
   activeProfile: Profile | null;
-  // Source connection
   fqdn: string;
   setFqdn: (v: string) => void;
   jwt: string;
   setJwt: (v: string) => void;
   apiUsername: string;
   setApiUsername: (v: string) => void;
-  apiPassword: string;
-  setApiPassword: (v: string) => void;
   serviceOrgId: string;
   setServiceOrgId: (v: string) => void;
   connectionStatus: ConnectionStatus;
-  // Dest connection (migration)
+  /** Source SO discovered from the connection result, used as the combobox's initial display name. */
+  connectedServiceOrg?: { id: number; name: string } | null;
   destFqdn: string;
   setDestFqdn: (v: string) => void;
   destJwt: string;
@@ -31,14 +30,34 @@ interface SetupPanelProps {
   setDestServerUrl: (v: string) => void;
   setDestServerVersion: (v: string) => void;
   setDestConnectedServiceOrg: (v: { id: number; name: string } | null) => void;
-  // Callbacks
+  destConnectedServiceOrg?: { id: number; name: string } | null;
   onConnect: () => void;
   onSelectProfile: (profile: Profile) => void;
   onShowNewProfile: () => void;
-  onBack: () => void;
   addLog: (level: LogEntry['level'], message: string) => void;
   loadProfiles: () => Promise<void>;
   setActiveProfile: (profile: Profile | null) => void;
+}
+
+function formatRelative(iso?: string): string | null {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return null;
+  const ms = Date.now() - then;
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.round(days / 7)}w ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function profileBadge(profile: Profile): string {
+  if (profile.type === 'migration') return 'Migrate';
+  return 'Export';
 }
 
 export function SetupPanel({
@@ -50,6 +69,7 @@ export function SetupPanel({
   apiUsername, setApiUsername,
   serviceOrgId, setServiceOrgId,
   connectionStatus,
+  connectedServiceOrg,
   destFqdn, setDestFqdn,
   destJwt, setDestJwt,
   destApiUsername, setDestApiUsername,
@@ -57,10 +77,10 @@ export function SetupPanel({
   destConnectionStatus, setDestConnectionStatus,
   setDestServerUrl, setDestServerVersion,
   setDestConnectedServiceOrg,
+  destConnectedServiceOrg,
   onConnect,
   onSelectProfile,
   onShowNewProfile,
-  onBack,
   addLog,
   loadProfiles,
   setActiveProfile,
@@ -115,140 +135,152 @@ export function SetupPanel({
     }
   };
 
+  const renderProfileList = () => (
+    <div className="card card-compact fade-in">
+      <div className="card-header">
+        <h2 className="card-title" style={{ fontSize: '0.95rem' }}>Profiles</h2>
+      </div>
+      <div className="profile-list" style={{ display: 'grid', gap: 4 }}>
+        {profiles.length === 0 ? (
+          <div className="empty">
+            <div className="icon">∅</div>
+            <div className="title">No saved profiles yet</div>
+            <div className="desc">Profiles store your server FQDN, username, and SO so you can re-connect with one click.</div>
+            <button className="btn btn-primary" style={{ fontSize: 12, padding: '7px 14px' }} onClick={onShowNewProfile}>
+              + Create your first profile
+            </button>
+          </div>
+        ) : (
+          <>
+            {profiles.map(profile => {
+              const isActive = activeProfile?.name === profile.name;
+              const lastUsed = formatRelative(profile.lastUsed);
+              return (
+                <div
+                  key={profile.name}
+                  className={`item ${isActive ? 'active' : ''}`}
+                  onClick={() => onSelectProfile(profile)}
+                >
+                  <div className="col">
+                    <div className="name" title={profile.name}>{profile.name}</div>
+                    <div className="sub" title={profile.source.fqdn}>
+                      {profile.type === 'migration' && profile.destination
+                        ? `${profile.source.fqdn} → ${profile.destination.fqdn}`
+                        : profile.source.fqdn}
+                    </div>
+                    {lastUsed && <div className="lastrun">Last used <strong style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>{lastUsed}</strong></div>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span className="badge">{profileBadge(profile)}</span>
+                    <button
+                      title="Delete profile"
+                      style={{ background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (confirm(`Delete profile "${profile.name}"?`)) {
+                          try {
+                            await api.deleteProfile(profile.name);
+                            await api.deleteCredentials(profile.name);
+                            addLog('info', `Deleted profile "${profile.name}"`);
+                            await loadProfiles();
+                            if (activeProfile?.name === profile.name) {
+                              setActiveProfile(null);
+                              setFqdn('');
+                              setServiceOrgId('');
+                            }
+                          } catch (err) {
+                            addLog('error', `Failed to delete: ${err}`);
+                          }
+                        }
+                      }}
+                    >×</button>
+                  </div>
+                </div>
+              );
+            })}
+            <button className="new" onClick={onShowNewProfile}>+ New profile</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderConnectionCard = (label: string, isDest: boolean) => {
+    const status = isDest ? destConnectionStatus : connectionStatus;
+    const isConnected = status === 'connected';
+    const fqdnVal = isDest ? destFqdn : fqdn;
+    const setFqdnVal = isDest ? setDestFqdn : setFqdn;
+    const userVal = isDest ? destApiUsername : apiUsername;
+    const setUserVal = isDest ? setDestApiUsername : setApiUsername;
+    const jwtVal = isDest ? destJwt : jwt;
+    const setJwtVal = isDest ? setDestJwt : setJwt;
+    const soVal = isDest ? destServiceOrgId : serviceOrgId;
+    const setSoVal = isDest ? setDestServiceOrgId : setServiceOrgId;
+    const handleConnect = isDest ? handleDestConnect : onConnect;
+
+    return (
+      <div className="card card-compact fade-in">
+        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 className="card-title">
+            {label} <span className="header-accent">Connection</span>
+          </h2>
+          {isConnected && (
+            <span className="conn-chip" style={{ fontSize: 11 }}>
+              <span className="dot" />Connected
+            </span>
+          )}
+        </div>
+        <div className="form-group">
+          <label className="form-label">Server FQDN</label>
+          <input type="text" className="form-input" placeholder="ncentral.example.com" value={fqdnVal} onChange={e => setFqdnVal(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">API Username <span className="text-secondary" style={{ fontSize: '0.7em' }}>(required for user creation)</span></label>
+          <input type="text" className="form-input" placeholder="admin@example.com" value={userVal} onChange={e => setUserVal(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">JWT Token</label>
+          <input type="password" className="form-input mono" placeholder="eyJhbGciOiJIUzI1NiIs..." value={jwtVal} onChange={e => setJwtVal(e.target.value)} />
+        </div>
+
+        <div className="form-group" style={{ borderTop: '1px dashed var(--color-border)', paddingTop: 'var(--space-md)' }}>
+          <label className="form-label">
+            Target Service Org
+            {!isConnected && <span style={{ color: 'var(--color-text-muted)', fontWeight: 400, marginLeft: 6, fontSize: '0.7em' }}>(available after connect)</span>}
+          </label>
+          <ServiceOrgCombobox
+            value={soVal}
+            onChange={setSoVal}
+            enabled={isConnected}
+            placeholder="Select or type a service org…"
+            initialName={isDest ? destConnectedServiceOrg?.name : connectedServiceOrg?.name}
+          />
+        </div>
+
+        <button
+          className={`btn ${isConnected ? 'btn-secondary' : 'btn-primary'} btn-lg`}
+          style={{ width: '100%' }}
+          onClick={handleConnect}
+          disabled={status === 'connecting'}
+        >
+          {status === 'connecting'
+            ? 'Connecting…'
+            : isConnected
+              ? `Reconnect ${isDest ? 'Destination' : (appMode === 'migrate' ? 'Source' : '')}`.trim()
+              : `Connect ${isDest ? 'Destination' : (appMode === 'migrate' ? 'Source' : 'Now')}`}
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="centered-dashboard fade-in">
-      {/* Back to Home / Mode Indicator */}
-      <div className="card" style={{ padding: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <button
-            className="btn btn-ghost"
-            onClick={onBack}
-            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}
-          >
-            ← Back
-          </button>
-          <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>
-            {appMode === 'export' ? 'Export Mode' : 'Migration Mode'}
-          </span>
-          <div style={{ width: 80 }} />
+      <div className={`setup-split${appMode === 'migrate' ? ' migrate' : ''}`}>
+        {renderProfileList()}
+        <div className={appMode === 'migrate' ? 'connection-pair' : ''} style={appMode === 'migrate' ? undefined : { display: 'grid', gap: 16 }}>
+          {renderConnectionCard(appMode === 'migrate' ? 'Source' : 'Direct', false)}
+          {appMode === 'migrate' && renderConnectionCard('Destination', true)}
         </div>
-      </div>
-
-      <div>
-        {/* Profile Selection */}
-        <div className="card card-compact fade-in" style={{ marginBottom: 'var(--space-md)' }}>
-          <div className="card-header">
-            <h2 className="card-title">Select <span className="header-accent">Profile</span></h2>
-          </div>
-          <div className="profiles-grid">
-            {profiles.map(profile => (
-              <div
-                key={profile.name}
-                className={`profile-card ${activeProfile?.name === profile.name ? 'active' : ''}`}
-                onClick={() => onSelectProfile(profile)}
-              >
-                <div className="profile-info">
-                  <span className="profile-name">{profile.name}</span>
-                  <span className="profile-fqdn">{profile.source.fqdn}</span>
-                </div>
-                <button
-                  className="profile-delete"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (confirm(`Delete profile "${profile.name}"?`)) {
-                      try {
-                        await api.deleteProfile(profile.name);
-                        await api.deleteCredentials(profile.name);
-                        addLog('info', `Deleted profile "${profile.name}"`);
-                        await loadProfiles();
-                        if (activeProfile?.name === profile.name) {
-                          setActiveProfile(null);
-                          setFqdn('');
-                          setServiceOrgId('');
-                        }
-                      } catch (err) {
-                        addLog('error', `Failed to delete: ${err}`);
-                      }
-                    }
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <button className="profile-card new" onClick={onShowNewProfile}>
-              <span>+ New Profile</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className={appMode === 'migrate' ? 'setup-grid' : ''}>
-        {/* Source Connection */}
-        <div className="card card-compact fade-in">
-          <div className="card-header">
-            <h2 className="card-title">
-              {appMode === 'migrate' ? 'Source' : 'Direct'} <span className="header-accent">Connection</span>
-            </h2>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Server FQDN</label>
-            <input type="text" className="form-input" placeholder="ncentral.example.com" value={fqdn} onChange={e => setFqdn(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">API Username <span className="text-secondary" style={{ fontSize: '0.7em' }}>(Required for User Add)</span></label>
-            <input type="text" className="form-input" placeholder="admin@example.com" value={apiUsername} onChange={e => setApiUsername(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">JWT Token</label>
-            <input type="password" className="form-input mono" placeholder="eyJhbGciOiJIUzI1NiIs..." value={jwt} onChange={e => setJwt(e.target.value)} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Target Service Org ID</label>
-            <input type="number" className="form-input" placeholder="Service Org ID (optional)" value={serviceOrgId} onChange={e => setServiceOrgId(e.target.value)} />
-          </div>
-          <button
-            className="btn btn-primary btn-lg"
-            style={{ width: '100%' }}
-            onClick={onConnect}
-            disabled={connectionStatus === 'connecting'}
-          >
-            {connectionStatus === 'connecting' ? 'Connecting...' : appMode === 'migrate' ? 'Connect Source' : 'Connect Now'}
-          </button>
-        </div>
-
-        {/* Destination Connection (Migration only) */}
-        {appMode === 'migrate' && (
-          <div className="card card-compact fade-in">
-            <div className="card-header">
-              <h2 className="card-title">Destination <span className="header-accent">Connection</span></h2>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Server FQDN</label>
-              <input type="text" className="form-input" placeholder="destination.example.com" value={destFqdn} onChange={e => setDestFqdn(e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">API Username <span className="text-secondary" style={{ fontSize: '0.7em' }}>(Required for User Add)</span></label>
-              <input type="text" className="form-input" placeholder="admin@example.com" value={destApiUsername} onChange={e => setDestApiUsername(e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">JWT Token</label>
-              <input type="password" className="form-input mono" placeholder="eyJhbGciOiJIUzI1NiIs..." value={destJwt} onChange={e => setDestJwt(e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Target Service Org ID</label>
-              <input type="number" className="form-input" placeholder="Service Org ID (optional)" value={destServiceOrgId} onChange={e => setDestServiceOrgId(e.target.value)} />
-            </div>
-            <button
-              className="btn btn-primary btn-lg"
-              style={{ width: '100%' }}
-              onClick={handleDestConnect}
-              disabled={destConnectionStatus === 'connecting'}
-            >
-              {destConnectionStatus === 'connecting' ? 'Connecting...' : 'Connect Destination'}
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

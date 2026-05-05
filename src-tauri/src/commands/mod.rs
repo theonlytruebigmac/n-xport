@@ -3,9 +3,11 @@
 pub mod connection;
 pub mod config;
 pub mod export;
+pub mod import;
 pub mod migration;
 
 pub use connection::*;
 pub use config::*;
 pub use export::*;
+pub use import::*;
 pub use migration::*;

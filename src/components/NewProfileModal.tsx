@@ -1,5 +1,5 @@
 interface NewProfileModalProps {
-    appMode: 'export' | 'migrate';
+    appMode: 'export' | 'migrate' | 'import';
     newProfileName: string;
     setNewProfileName: (v: string) => void;
     fqdn: string;

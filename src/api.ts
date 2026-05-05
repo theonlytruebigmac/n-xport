@@ -7,7 +7,10 @@ import type {
     ExportType,
     ExportOptions,
     ExportResult,
-    MigrationOptions
+    MigrationOptions,
+    ImportType,
+    ImportResult,
+    ServiceOrg
 } from './types';
 
 // Connection commands
@@ -49,6 +52,10 @@ export async function disconnect(): Promise<void> {
 
 export async function getServiceOrgInfo(serviceOrgId: number): Promise<{ id: number, name: string }> {
     return invoke('get_service_org_info', { serviceOrgId });
+}
+
+export async function listServiceOrgs(): Promise<ServiceOrg[]> {
+    return invoke('list_service_orgs');
 }
 
 // Config commands
@@ -110,4 +117,22 @@ export async function getExportTypes(): Promise<ExportType[]> {
 
 export async function cancelExport(): Promise<void> {
     return invoke('cancel_export');
+}
+
+// Import commands
+export async function getImportTypes(): Promise<ImportType[]> {
+    return invoke('get_import_types');
+}
+
+export async function generateTemplate(resourceType: string, path: string): Promise<string> {
+    return invoke('generate_template', { resourceType, path });
+}
+
+export async function startImport(
+    resourceType: string,
+    csvPath: string,
+    serviceOrgId: number,
+    dryRun: boolean
+): Promise<ImportResult> {
+    return invoke('start_import', { resourceType, csvPath, serviceOrgId, dryRun });
 }

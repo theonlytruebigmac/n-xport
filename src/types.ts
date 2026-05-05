@@ -41,6 +41,11 @@ export interface ConnectionResult {
   serviceOrgName?: string;
 }
 
+export interface ServiceOrg {
+  id: number;
+  name: string;
+}
+
 export interface ExportOptions {
   serviceOrgs: boolean;
   customers: boolean;
@@ -86,6 +91,33 @@ export interface MigrationOptions {
   accessGroups: boolean;
   users: boolean;
   orgProperties: boolean;
+}
+
+export interface ImportType {
+  id: string;
+  name: string;
+  supported: boolean;
+}
+
+export type ImportRowStatus = 'created' | 'skipped' | 'error' | 'planned';
+
+export interface ImportRowOutcome {
+  rowNumber: number;
+  status: ImportRowStatus;
+  label: string;
+  message: string;
+}
+
+export interface ImportResult {
+  success: boolean;
+  message: string;
+  dryRun: boolean;
+  rowsTotal: number;
+  rowsCreated: number;
+  rowsSkipped: number;
+  rowsErrored: number;
+  rowsPlanned: number;
+  outcomes: ImportRowOutcome[];
 }
 
 export interface AppState {

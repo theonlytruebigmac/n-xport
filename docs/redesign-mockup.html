@@ -1,0 +1,1658 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>N-xport · Redesign Mockup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Backgrounds — leaning a touch deeper into purple */
+      --color-bg-primary: #0c0a1a;
+      --color-bg-secondary: #15122a;
+      --color-bg-tertiary: #1f1a3a;
+      --color-bg-card: rgba(21, 18, 42, 0.92);
+      --color-bg-input: rgba(12, 10, 26, 0.85);
+      --color-bg-code: #08071a;
+
+      --color-border: rgba(167, 139, 250, 0.10);
+      --color-border-hover: rgba(167, 139, 250, 0.22);
+      --color-border-focus: rgba(167, 139, 250, 0.55);
+
+      --color-text-primary: #f5f3ff;
+      --color-text-secondary: #a8a4c4;
+      --color-text-muted: #6f6a90;
+
+      /* Primary accent — vivid violet */
+      --color-accent: #a78bfa;
+      --color-accent-strong: #8b5cf6;
+      --color-accent-hover: #c4b5fd;
+      --color-accent-grad: linear-gradient(135deg, #c084fc 0%, #8b5cf6 100%);
+      --color-glow: rgba(167, 139, 250, 0.35);
+
+      /* Cyan demoted to a cool secondary / "info" / connected-status only */
+      --color-info: #38DBFF;
+      --color-info-bg: rgba(56, 219, 255, 0.12);
+
+      --color-success: #34d399;
+      --color-success-bg: rgba(52, 211, 153, 0.12);
+      --color-warning: #fbbf24;
+      --color-warning-bg: rgba(251, 191, 36, 0.12);
+      --color-error: #f87171;
+      --color-error-bg: rgba(248, 113, 113, 0.12);
+
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 12px;
+
+      --shadow-md: 0 4px 14px rgba(20, 0, 60, 0.45);
+      --shadow-lg: 0 12px 32px rgba(20, 0, 60, 0.55);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #060418;
+      color: var(--color-text-primary);
+      font-size: 14px;
+      line-height: 1.45;
+      letter-spacing: -0.005em;
+      padding: 48px 24px 96px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; }
+
+    .board-title {
+      max-width: 1100px;
+      margin: 0 auto 40px;
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+    }
+    .board-title h1 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .board-title h1 .accent { color: var(--color-accent); }
+    .board-title p {
+      color: var(--color-text-muted);
+      font-size: 13px;
+    }
+
+    .board {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      gap: 64px;
+    }
+
+    .screen-frame {
+      display: grid;
+      gap: 12px;
+    }
+    .screen-label {
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+      color: var(--color-text-muted);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .screen-label strong {
+      color: var(--color-text-secondary);
+      font-weight: 600;
+    }
+    .screen-label span { color: var(--color-text-muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+    .app-window {
+      background: var(--color-bg-primary);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+    }
+
+    /* ─── Slim header strip ──────────────────────────────────────────────── */
+    .app-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 20px;
+      background: var(--color-bg-secondary);
+      border-bottom: 1px solid var(--color-border);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .brand .accent { color: var(--color-accent); font-weight: 700; }
+    .brand .ver {
+      color: var(--color-text-muted);
+      font-size: 11px;
+      font-weight: 400;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--color-bg-tertiary);
+    }
+
+    .header-trail { display: flex; align-items: center; gap: 12px; }
+
+    .conn-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--color-success-bg);
+      color: var(--color-success);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .conn-chip.disconnected {
+      background: var(--color-bg-tertiary);
+      color: var(--color-text-muted);
+    }
+    .conn-chip .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 6px currentColor;
+    }
+    .conn-chip .sep {
+      width: 1px; height: 10px; background: rgba(255,255,255,0.15);
+    }
+    .conn-chip .so { color: var(--color-text-secondary); }
+
+    .icon-btn {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      background: transparent;
+      border: 1px solid var(--color-border);
+      color: var(--color-text-secondary);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .icon-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+
+    /* ─── Page title row (replaces the old Mode bar) ─────────────────────── */
+    .page-title {
+      padding: 20px 24px 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+    }
+    .page-title h2 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .page-title .accent { color: var(--color-accent); font-weight: 600; }
+    .page-title .right { color: var(--color-text-muted); font-size: 12px; }
+
+    /* Step pips — sole nav element, made to look clickable */
+    .step-pips {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      border-radius: 999px;
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+    }
+    .step-pips .pip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      transition: 150ms ease;
+    }
+    .step-pips .pip:hover { color: var(--color-text-primary); background: var(--color-bg-tertiary); }
+    .step-pips .pip .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--color-bg-tertiary);
+      border: 1px solid var(--color-border);
+      flex-shrink: 0;
+    }
+    .step-pips .pip.done .dot { background: var(--color-accent); border-color: var(--color-accent); opacity: 0.55; }
+    .step-pips .pip.done { color: var(--color-text-secondary); }
+    .step-pips .pip.current {
+      color: var(--color-accent);
+      background: rgba(167, 139, 250, 0.10);
+    }
+    .step-pips .pip.current .dot {
+      background: var(--color-accent);
+      border-color: var(--color-accent);
+      box-shadow: 0 0 6px var(--color-glow);
+    }
+    .step-pips .pip.future { cursor: default; opacity: 0.5; }
+    .step-pips .pip.future:hover { background: transparent; color: var(--color-text-muted); }
+
+    .page-body {
+      padding: 8px 24px 24px;
+    }
+
+    /* ─── Cards ──────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--color-bg-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .card + .card { margin-top: 16px; }
+    .card-pad { padding: 20px; }
+    .card-pad-lg { padding: 28px; }
+
+    .card-section-head {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 12px;
+    }
+
+    /* ─── Form basics ────────────────────────────────────────────────────── */
+    .row { display: grid; gap: 16px; }
+    .row-2 { grid-template-columns: 1fr 1fr; }
+    .row-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+    label.field {
+      display: grid;
+      gap: 6px;
+    }
+    label.field .lbl {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+    }
+    label.field .lbl .opt { color: var(--color-text-muted); font-weight: 400; opacity: 0.7; text-transform: none; letter-spacing: 0; margin-left: 6px; }
+
+    .input, .input-group input, .input-group button {
+      background: var(--color-bg-input);
+      border: 1px solid var(--color-border);
+      color: var(--color-text-primary);
+      padding: 9px 12px;
+      border-radius: var(--radius-md);
+      font: inherit;
+      width: 100%;
+    }
+    .input:focus, .input-group input:focus { outline: none; border-color: var(--color-border-focus); }
+    .input::placeholder, .input-group input::placeholder {
+      color: var(--color-text-muted);
+      font: inherit;
+      opacity: 1;
+    }
+
+    .input-group {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+    .input-group button {
+      width: auto;
+      cursor: pointer;
+      background: var(--color-bg-tertiary);
+      color: var(--color-text-primary);
+      padding: 9px 14px;
+    }
+    .input-group button:hover { background: var(--color-border); }
+
+    /* ─── Buttons ────────────────────────────────────────────────────────── */
+    .btn {
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      padding: 10px 18px;
+      border-radius: var(--radius-md);
+      border: 1px solid transparent;
+      transition: 150ms ease;
+    }
+    .btn-primary {
+      background: var(--color-accent-grad);
+      color: #1a0833;
+      box-shadow: 0 4px 14px var(--color-glow);
+    }
+    .btn-primary:hover { background: var(--color-accent-hover); color: #1a0833; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--color-text-primary);
+      border-color: var(--color-border);
+    }
+    .btn-secondary:hover { background: var(--color-bg-tertiary); }
+    .btn-ghost {
+      background: transparent;
+      color: var(--color-text-secondary);
+      border-color: transparent;
+      padding: 6px 8px;
+      font-weight: 500;
+    }
+    .btn-ghost:hover { color: var(--color-text-primary); }
+    .btn-link {
+      background: transparent;
+      color: var(--color-accent);
+      border: none;
+      font-weight: 500;
+      padding: 0;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    /* ─── Card actions row (sticky footer-style) ─────────────────────────── */
+    .card-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      background: rgba(13, 11, 20, 0.55);
+      border-top: 1px solid var(--color-border);
+    }
+    .card-actions .meta { color: var(--color-text-muted); font-size: 12px; }
+
+    /* ─── Home: ModeCards ─────────────────────────────────────────────────── */
+    .home-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .mode-card {
+      background: var(--color-bg-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      transition: 200ms ease;
+      position: relative;
+    }
+    .mode-card:hover { transform: translateY(-2px); border-color: var(--color-border-hover); }
+    .mode-card .accent-bar { height: 3px; }
+    .mode-card .body { padding: 28px; text-align: center; }
+    .mode-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+    .mode-card p { font-size: 13px; color: var(--color-text-secondary); }
+    .mode-card.recommended {
+      border-color: rgba(167, 139, 250, 0.30);
+      background: linear-gradient(180deg, rgba(167, 139, 250, 0.06) 0%, var(--color-bg-card) 60%);
+      box-shadow: 0 6px 24px rgba(167, 139, 250, 0.10);
+    }
+    .mode-card .pill {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-accent);
+      background: rgba(167, 139, 250, 0.12);
+      border: 1px solid rgba(167, 139, 250, 0.25);
+    }
+
+    /* ─── Setup: split pane (profiles | connection) ──────────────────────── */
+    .setup-split {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 16px;
+    }
+    .profile-list .item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: var(--radius-md);
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+    .profile-list .item:hover { background: var(--color-bg-tertiary); }
+    .profile-list .item.active {
+      background: var(--color-bg-tertiary);
+      border-color: var(--color-border-focus);
+    }
+    .profile-list .item .name {
+      font-weight: 500;
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .profile-list .item .sub {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .profile-list .item .lastrun {
+      font-size: 10px;
+      color: var(--color-text-muted);
+      margin-top: 2px;
+      font-variant-numeric: tabular-nums;
+    }
+    .profile-list .item .lastrun .dot {
+      display: inline-block;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--color-text-muted);
+      margin: 0 6px;
+      vertical-align: middle;
+      opacity: 0.5;
+    }
+    .profile-list .item .badge {
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--color-bg-secondary);
+      flex-shrink: 0;
+    }
+    .profile-list .item .col { display: grid; min-width: 0; }
+    .profile-list .new {
+      margin-top: 8px;
+      padding: 12px;
+      border: 1px dashed var(--color-border);
+      border-radius: var(--radius-md);
+      color: var(--color-text-secondary);
+      text-align: center;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .profile-list .new:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+    /* ─── Configure (Import) ─────────────────────────────────────────────── */
+    .resource-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+    .resource-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      background: var(--color-bg-input);
+    }
+    .resource-card:hover { border-color: var(--color-border-hover); }
+    .resource-card.selected {
+      border-color: var(--color-accent);
+      background: rgba(56, 219, 255, 0.06);
+    }
+    .resource-card .radio {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      border: 1.5px solid var(--color-text-muted);
+      flex-shrink: 0;
+      position: relative;
+    }
+    .resource-card.selected .radio { border-color: var(--color-accent); }
+    .resource-card.selected .radio::after {
+      content: '';
+      position: absolute; inset: 3px;
+      border-radius: 50%;
+      background: var(--color-accent);
+    }
+    .resource-card .name { font-weight: 500; flex: 1; }
+    /* Service Org combobox */
+    .combo {
+      position: relative;
+    }
+    .combo .field-wrap {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: stretch;
+      background: var(--color-bg-input);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      cursor: text;
+    }
+    .combo .field-wrap:focus-within { border-color: var(--color-border-focus); }
+    .combo input {
+      background: transparent;
+      border: none;
+      color: var(--color-text-primary);
+      padding: 9px 12px;
+      font: inherit;
+      outline: none;
+    }
+    .combo .id-pill {
+      align-self: center;
+      margin-right: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(167, 139, 250, 0.15);
+      color: var(--color-accent);
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .combo .icon-action {
+      width: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-text-muted);
+      cursor: pointer;
+      border-left: 1px solid var(--color-border);
+      background: transparent;
+      border-top: none;
+      border-right: none;
+      border-bottom: none;
+      font-size: 14px;
+    }
+    .combo .icon-action:hover { color: var(--color-accent); }
+    .combo .pop {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0; right: 0;
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      padding: 6px;
+      z-index: 5;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .combo .pop .head {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      padding: 8px 10px 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .combo .pop .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .combo .pop .row:hover { background: var(--color-bg-tertiary); }
+    .combo .pop .row.active {
+      background: rgba(167, 139, 250, 0.10);
+      color: var(--color-accent);
+    }
+    .combo .pop .row .name { color: var(--color-text-primary); }
+    .combo .pop .row .id {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--color-text-muted);
+    }
+    .combo .pop .footer {
+      border-top: 1px solid var(--color-border);
+      margin-top: 4px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--color-text-muted);
+    }
+    .combo.disabled .field-wrap {
+      background: rgba(12, 10, 26, 0.5);
+      border-style: dashed;
+      cursor: not-allowed;
+    }
+    .combo.disabled input { color: var(--color-text-muted); cursor: not-allowed; }
+    .combo .inline-status {
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--color-text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .combo .inline-status.loading { color: var(--color-text-secondary); }
+    .combo .inline-status.error { color: var(--color-error); }
+    .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 800ms linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* States gallery (just for the mockup) */
+    .states-gallery {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+      margin-top: 12px;
+    }
+    .states-gallery.cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .state-cell {
+      background: var(--color-bg-card);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+    }
+    .state-cell .cap {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 10px;
+    }
+    /* Running indicator pulse */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    .pulse-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--color-accent);
+      box-shadow: 0 0 8px var(--color-glow);
+      animation: pulse 1.4s ease-in-out infinite;
+      display: inline-block;
+    }
+    /* Mini-summary for state cells */
+    .mini-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .mini-stats .ms {
+      padding: 8px 6px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-input);
+      text-align: center;
+    }
+    .mini-stats .ms .c { font-size: 18px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; }
+    .mini-stats .ms .l { font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); margin-top: 4px; }
+    .ms.created { border-color: rgba(52, 211, 153, 0.4); background: var(--color-success-bg); }
+    .ms.created .c { color: var(--color-success); }
+    .ms.errored { border-color: rgba(248, 113, 113, 0.4); background: var(--color-error-bg); }
+    .ms.errored .c { color: var(--color-error); }
+    .ms.skipped .c { color: var(--color-text-secondary); }
+    .ms.running { border-color: rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.10); }
+    .ms.running .c { color: var(--color-accent); }
+    /* Mini progress bar */
+    .mini-progress {
+      height: 6px;
+      background: var(--color-bg-tertiary);
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 8px 0 4px;
+    }
+    .mini-progress > div { height: 100%; border-radius: 999px; }
+    .mini-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--color-text-muted);
+      margin-bottom: 10px;
+    }
+    .mini-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--color-border);
+    }
+    .mini-actions button {
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      padding: 5px 10px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-tertiary);
+      color: var(--color-text-secondary);
+      flex: 1;
+    }
+    .mini-actions button.primary {
+      background: var(--color-accent-grad);
+      color: #1a0833;
+      font-weight: 600;
+      border: none;
+    }
+    .mini-actions button.danger {
+      background: var(--color-error-bg);
+      color: var(--color-error);
+      border-color: rgba(248, 113, 113, 0.4);
+    }
+    .mini-actions button.success {
+      background: var(--color-success-bg);
+      color: var(--color-success);
+      border-color: rgba(52, 211, 153, 0.4);
+      font-weight: 600;
+    }
+
+    /* Settings popover preview */
+    .settings-pop {
+      width: 240px;
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      padding: 4px;
+      box-shadow: var(--shadow-md);
+    }
+    .settings-pop .item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      font-size: 13px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+    .settings-pop .item:hover { background: var(--color-bg-tertiary); }
+    .settings-pop .item .v { font-size: 11px; color: var(--color-text-muted); }
+    .settings-pop .sep {
+      height: 1px;
+      background: var(--color-border);
+      margin: 4px 0;
+    }
+
+    /* Keyboard hint glyph */
+    .kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 16px;
+      padding: 0 4px;
+      height: 16px;
+      margin-left: 8px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.65);
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 10px;
+      font-weight: 500;
+      vertical-align: middle;
+    }
+    .btn-primary .kbd { background: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.55); }
+    .btn-danger .kbd { background: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.55); }
+
+    /* Templates dropdown */
+    .templates-menu {
+      position: relative;
+      display: inline-block;
+    }
+    .templates-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-input);
+      color: var(--color-text-secondary);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .templates-trigger:hover {
+      color: var(--color-accent);
+      border-color: var(--color-border-focus);
+    }
+    .templates-trigger .caret { opacity: 0.6; font-size: 10px; }
+    .templates-pop {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      min-width: 220px;
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      padding: 6px;
+      z-index: 5;
+    }
+    .templates-pop .pop-head {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      padding: 8px 10px 4px;
+    }
+    .templates-pop .pop-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--color-text-primary);
+    }
+    .templates-pop .pop-item:hover { background: var(--color-bg-tertiary); }
+    .templates-pop .pop-item .arrow { color: var(--color-text-muted); font-size: 11px; }
+
+    .unsupported-list {
+      margin-top: 14px;
+      padding: 12px 14px;
+      background: var(--color-bg-secondary);
+      border: 1px dashed var(--color-border);
+      border-radius: var(--radius-md);
+    }
+    .unsupported-list .head {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 6px;
+    }
+    .unsupported-list .items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      font-size: 13px;
+      color: var(--color-text-muted);
+    }
+
+    /* Compact pill toggle, lives in the card-actions footer */
+    .pill-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px 5px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      background: var(--color-warning-bg);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--color-warning);
+      user-select: none;
+    }
+    .pill-toggle.off {
+      border-color: var(--color-border);
+      background: var(--color-bg-tertiary);
+      color: var(--color-text-muted);
+    }
+    .pill-toggle .switch {
+      position: relative;
+      width: 28px; height: 16px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 999px;
+      transition: 150ms;
+      flex-shrink: 0;
+    }
+    .pill-toggle .switch::after {
+      content: '';
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: #fff;
+      transition: 150ms;
+    }
+    .pill-toggle.on .switch { background: var(--color-warning); }
+    .pill-toggle.on .switch::after { left: 14px; }
+    .pill-toggle .icon { font-weight: 700; }
+
+    /* ─── Results / running view ─────────────────────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .stat {
+      padding: 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--color-border);
+      background: var(--color-bg-input);
+    }
+    .stat .count {
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1;
+    }
+    .stat .label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-text-muted);
+      margin-top: 6px;
+    }
+    .stat.created { border-color: rgba(34, 197, 94, 0.4); background: var(--color-success-bg); }
+    .stat.created .count { color: var(--color-success); }
+    .stat.skipped .count { color: var(--color-text-secondary); }
+    .stat.errored { border-color: rgba(239, 68, 68, 0.4); background: var(--color-error-bg); }
+    .stat.errored .count { color: var(--color-error); }
+    .stat.planned { border-color: rgba(245, 158, 11, 0.4); background: var(--color-warning-bg); }
+    .stat.planned .count { color: var(--color-warning); }
+
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .progress-bar-wrap {
+      flex: 1;
+      height: 8px;
+      background: var(--color-bg-tertiary);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress-bar-wrap > div {
+      height: 100%;
+      background: var(--color-accent);
+      width: 67%;
+      border-radius: 999px;
+    }
+    .progress-row .pct { font-weight: 600; font-size: 13px; color: var(--color-accent); min-width: 40px; text-align: right; }
+    .progress-row .phase { font-size: 12px; color: var(--color-text-muted); min-width: 90px; }
+
+    .log-toggle {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      margin-top: 8px;
+      cursor: pointer;
+    }
+    .log-toggle .title {
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .log-toggle .chev { color: var(--color-text-muted); }
+
+    .log-panel {
+      margin-top: -1px;
+      background: var(--color-bg-code);
+      border: 1px solid var(--color-border);
+      border-top: none;
+      border-radius: 0 0 var(--radius-md) var(--radius-md);
+      padding: 12px 14px;
+      max-height: 220px;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    .log-panel .line {
+      display: flex;
+      gap: 10px;
+    }
+    .log-panel .ts {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--color-text-muted);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+    .log-panel .lvl {
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      flex-shrink: 0;
+      width: 64px;
+      font-weight: 500;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .log-panel .lvl.success { color: var(--color-success); }
+    .log-panel .lvl.error { color: var(--color-error); }
+    .log-panel .lvl.info { color: var(--color-text-secondary); }
+    .log-panel .lvl.skipped { color: var(--color-text-muted); }
+    .log-panel .lvl.planned { color: var(--color-warning); }
+    .log-panel .msg { color: var(--color-text-primary); }
+
+    /* Run-for-real confirmation strip */
+    .confirm-strip {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 16px;
+      border-radius: var(--radius-md);
+      background: rgba(248, 113, 113, 0.08);
+      border: 1px solid rgba(248, 113, 113, 0.30);
+      margin-top: 12px;
+    }
+    .confirm-strip .icon {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      background: rgba(248, 113, 113, 0.18);
+      color: var(--color-error);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+    }
+    .confirm-strip .text { flex: 1; font-size: 12px; color: var(--color-text-secondary); }
+    .confirm-strip .text strong { color: var(--color-text-primary); }
+    .btn-danger {
+      background: var(--color-error);
+      color: #1a0808;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: var(--radius-md);
+      border: none;
+      box-shadow: 0 4px 14px rgba(248, 113, 113, 0.25);
+    }
+    .btn-danger:hover { background: #fca5a5; }
+
+    .annotation {
+      margin: 8px 0 -4px;
+      padding-left: 10px;
+      border-left: 2px solid var(--color-accent);
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      line-height: 1.55;
+      max-width: 720px;
+    }
+    .annotation strong { color: var(--color-text-primary); }
+  </style>
+</head>
+<body>
+  <div class="board-title">
+    <h1><span class="accent">N-xport</span> · Redesign Mockup</h1>
+    <p>Static HTML preview · IBM Plex Sans · existing palette</p>
+  </div>
+
+  <div class="board">
+
+    <!-- ────────────────────────────────  HOME  ──────────────────────────────── -->
+    <div class="screen-frame">
+      <div class="screen-label"><strong>1 · Home</strong> <span>3-card grid, slim header (no extra status drawer at the bottom)</span></div>
+      <div class="app-window">
+        <div class="app-header">
+          <div class="brand"><span class="accent">N-xport</span><span class="ver">v0.1.19</span></div>
+          <div class="header-trail">
+            <span class="conn-chip disconnected"><span class="dot"></span>Disconnected</span>
+            <button class="icon-btn" title="Settings">⚙</button>
+          </div>
+        </div>
+
+        <div class="page-title">
+          <div>
+            <h2>N-xport <span style="color: var(--color-text-muted); font-weight: 400; font-size: 14px; margin-left: 6px;">Data Tool</span></h2>
+            <p style="color: var(--color-text-secondary); font-size: 13px; margin-top: 4px;">Export, import, or migrate data between N-central servers.</p>
+          </div>
+        </div>
+
+        <div class="page-body">
+          <div class="home-grid">
+            <div class="mode-card recommended">
+              <span class="pill">Most common</span>
+              <div class="accent-bar" style="background: var(--color-accent);"></div>
+              <div class="body">
+                <h3>Export Data</h3>
+                <p>Pull customers, sites, users, and devices into CSV or JSON.</p>
+              </div>
+            </div>
+            <div class="mode-card">
+              <div class="accent-bar" style="background: var(--color-warning);"></div>
+              <div class="body">
+                <h3>Import Data</h3>
+                <p>Load customers, sites, access groups, roles, and users from a CSV.</p>
+              </div>
+            </div>
+            <div class="mode-card">
+              <div class="accent-bar" style="background: var(--color-success);"></div>
+              <div class="body">
+                <h3>Migrate Data</h3>
+                <p>Copy customers, users, roles, and properties between two N-central servers.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annotation">
+        <strong>Changes:</strong> single header row (brand · version · connection chip · settings); no separate <em>Mode</em> bar; no floating bottom <em>Connection Drawer</em>.
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────  SETUP  ─────────────────────────────── -->
+    <div class="screen-frame">
+      <div class="screen-label"><strong>2 · Setup</strong> <span>Two-column: profiles always visible on the left, connection on the right</span></div>
+      <div class="app-window">
+        <div class="app-header">
+          <div class="brand"><span class="accent">N-xport</span><span class="ver">v0.1.19</span></div>
+          <div class="header-trail">
+            <span class="conn-chip disconnected"><span class="dot"></span>Disconnected</span>
+            <button class="icon-btn" title="Settings">⚙</button>
+          </div>
+        </div>
+
+        <div class="page-title">
+          <h2>Connect to <span class="accent">N-central</span></h2>
+          <div class="step-pips" title="Click any completed step to jump back">
+            <span class="pip current"><span class="dot"></span>Setup</span>
+            <span class="pip future"><span class="dot"></span>Configure</span>
+            <span class="pip future"><span class="dot"></span>Run</span>
+          </div>
+        </div>
+
+        <div class="page-body">
+          <div class="setup-split">
+            <div class="card">
+              <div class="card-pad">
+                <div class="card-section-head">Profiles</div>
+                <div class="profile-list">
+                  <div class="item active">
+                    <div class="col">
+                      <div class="name">Production</div>
+                      <div class="sub">ncentral.acme.com</div>
+                      <div class="lastrun">Last used <strong style="color: var(--color-text-secondary); font-weight: 500;">2h ago</strong></div>
+                    </div>
+                    <div class="badge">Export</div>
+                  </div>
+                  <div class="item">
+                    <div class="col">
+                      <div class="name">Acme Lab → Production Migration Bundle</div>
+                      <div class="sub">lab.acme.com → ncentral.acme.com</div>
+                      <div class="lastrun">Last used <strong style="color: var(--color-text-secondary); font-weight: 500;">3d ago</strong></div>
+                    </div>
+                    <div class="badge">Migrate</div>
+                  </div>
+                  <div class="item">
+                    <div class="col">
+                      <div class="name">Customer Onboarding</div>
+                      <div class="sub">prod.acme.com</div>
+                      <div class="lastrun">Last used <strong style="color: var(--color-text-secondary); font-weight: 500;">last week</strong></div>
+                    </div>
+                    <div class="badge">Import</div>
+                  </div>
+                  <div class="new">+ New profile</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-pad">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                  <div class="card-section-head" style="margin:0;">Connection</div>
+                  <span class="conn-chip" style="font-size:11px;"><span class="dot"></span>Connected · v2025.3</span>
+                </div>
+                <div class="row" style="gap:14px;">
+                  <label class="field">
+                    <span class="lbl">Server FQDN</span>
+                    <input class="input" placeholder="ncentral.example.com" value="ncentral.acme.com" />
+                  </label>
+                  <div class="row row-2">
+                    <label class="field">
+                      <span class="lbl">API Username</span>
+                      <input class="input" placeholder="admin@example.com" value="api@acme.com" />
+                    </label>
+                    <label class="field">
+                      <span class="lbl">JWT Token</span>
+                      <input class="input" placeholder="eyJhbGciOiJIUzI1NiIs…" value="••••••••••••••••" />
+                    </label>
+                  </div>
+                </div>
+
+                <div style="margin-top: 22px; padding-top: 18px; border-top: 1px dashed var(--color-border);">
+                  <label class="field">
+                    <span class="lbl">Target Service Org <span class="opt">3 discovered after connect</span></span>
+                    <div class="combo">
+                      <div class="field-wrap">
+                        <input value="" placeholder="Select or type a service org name…" />
+                        <button class="icon-action" title="Refresh list">↻</button>
+                      </div>
+                      <div class="pop">
+                        <div class="head">
+                          <span>3 service orgs discovered</span>
+                          <span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; text-transform:none; letter-spacing:0;">Type to filter…</span>
+                        </div>
+                        <div class="row"><span class="name">Acme</span><span class="id">50</span></div>
+                        <div class="row"><span class="name">Acme Lab</span><span class="id">87</span></div>
+                        <div class="row"><span class="name">Beta Holdings</span><span class="id">142</span></div>
+                        <div class="footer">Or type a numeric ID directly.</div>
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+              <div class="card-actions">
+                <span class="meta">JWT saved to your OS keychain</span>
+                <div style="display:flex; gap:8px;">
+                  <button class="btn btn-secondary">Back</button>
+                  <button class="btn btn-primary">Continue →<span class="kbd">↵</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annotation">
+        <strong>Changes:</strong> profiles list moved to a left rail (no more empty space); single primary CTA at the bottom of the active card (no header button); status of each profile inline as a badge. The <strong>Service Org</strong> picker is staged — credentials submit first, then once <em>Connected ✓</em>, the SO combobox unlocks and is populated from the live server (with manual numeric-ID entry still allowed). The CTA flips from <em>Connect &amp; continue</em> to just <em>Continue</em> after connection succeeds.
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────  SO COMBOBOX STATES  ────────────────── -->
+    <div class="screen-frame">
+      <div class="screen-label"><strong>2a · SO combobox states</strong> <span>How the picker should behave through the connection lifecycle</span></div>
+      <div class="states-gallery">
+
+        <div class="state-cell">
+          <div class="cap">Disabled — pre-connect</div>
+          <div class="combo disabled">
+            <div class="field-wrap">
+              <input value="" placeholder="Connect first to load service orgs…" disabled />
+            </div>
+          </div>
+        </div>
+
+        <div class="state-cell">
+          <div class="cap">Loading — fetching SO list</div>
+          <div class="combo">
+            <div class="field-wrap">
+              <input value="" placeholder="Discovering service orgs…" />
+              <button class="icon-action" title="Loading"><span class="spinner"></span></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="state-cell">
+          <div class="cap">Error — fetch failed</div>
+          <div class="combo">
+            <div class="field-wrap" style="border-color: rgba(248, 113, 113, 0.4);">
+              <input value="" placeholder="Type a numeric ID to use it directly…" />
+              <button class="icon-action" title="Retry">↻</button>
+            </div>
+            <div class="inline-status error">
+              <span>⚠</span><span>Couldn't load service orgs — retry, or type an ID to bypass.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="state-cell">
+          <div class="cap">Manual override — typed ID, no match</div>
+          <div class="combo">
+            <div class="field-wrap">
+              <input value="9412" />
+              <span class="id-pill">9412</span>
+              <button class="icon-action" title="Refresh list">↻</button>
+            </div>
+            <div class="inline-status">
+              <span>↳</span><span>Custom ID — will be used as-is. Verify it exists on the server.</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="annotation">
+        <strong>Why:</strong> the picker depends on a live connection, so it needs explicit empty/loading/error states to avoid feeling broken when the network blips or the user opens the screen too early. The <em>manual override</em> state preserves the current power-user workflow of typing an ID without losing the safety net of the discovered list.
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────  CONFIGURE (IMPORT)  ─────────────────── -->
+    <div class="screen-frame">
+      <div class="screen-label"><strong>3 · Configure (Import)</strong> <span>Supported vs. unsupported are visually separated; dry-run is a banner toggle, not a checkbox</span></div>
+      <div class="app-window">
+        <div class="app-header">
+          <div class="brand"><span class="accent">N-xport</span><span class="ver">v0.1.19</span></div>
+          <div class="header-trail">
+            <span class="conn-chip"><span class="dot"></span>Connected<span class="sep"></span><span class="so">Acme · 50</span></span>
+            <button class="icon-btn" title="Settings">⚙</button>
+          </div>
+        </div>
+
+        <div class="page-title">
+          <h2>Configure <span class="accent">import</span></h2>
+          <div class="step-pips">
+            <span class="pip done"><span class="dot"></span>Setup</span>
+            <span class="pip current"><span class="dot"></span>Configure</span>
+            <span class="pip future"><span class="dot"></span>Run</span>
+          </div>
+        </div>
+
+        <div class="page-body">
+          <div class="card">
+            <div class="card-pad">
+              <div class="row row-2" style="gap:16px;">
+                <label class="field">
+                  <span class="lbl">CSV file</span>
+                  <div class="input-group">
+                    <input placeholder="Choose a CSV file…" value="/Users/zach/Downloads/customers.csv" />
+                    <button>Browse</button>
+                  </div>
+                </label>
+                <label class="field">
+                  <span class="lbl">Target Service Org</span>
+                  <div class="combo">
+                    <div class="field-wrap">
+                      <input value="Acme" placeholder="Search service orgs…" />
+                      <span class="id-pill">50</span>
+                      <button class="icon-action" title="Refresh list">↻</button>
+                    </div>
+                    <div class="pop">
+                      <div class="head">
+                        <span>3 service orgs discovered</span>
+                        <span style="font-family: 'IBM Plex Mono', ui-monospace, monospace; text-transform:none; letter-spacing:0;">Type to filter…</span>
+                      </div>
+                      <div class="row active"><span class="name">Acme</span><span class="id">50</span></div>
+                      <div class="row"><span class="name">Acme Lab</span><span class="id">87</span></div>
+                      <div class="row"><span class="name">Beta Holdings</span><span class="id">142</span></div>
+                      <div class="footer">Don't see it? Type a numeric ID to use it directly.</div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              <div style="margin-top: 22px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+                  <div class="card-section-head" style="margin: 0;">Resource to import</div>
+                  <div class="templates-menu">
+                    <button class="templates-trigger">
+                      <span>↓</span> CSV templates <span class="caret">▾</span>
+                    </button>
+                    <!-- (popover collapsed in this mockup screen so the SO combobox below can be shown open without visual collision) -->
+                  </div>
+                </div>
+                <div class="resource-grid">
+                  <div class="resource-card selected">
+                    <div class="radio"></div>
+                    <div class="name">Customers</div>
+                  </div>
+                  <div class="resource-card">
+                    <div class="radio"></div>
+                    <div class="name">Sites</div>
+                  </div>
+                  <div class="resource-card">
+                    <div class="radio"></div>
+                    <div class="name">Access Groups</div>
+                  </div>
+                  <div class="resource-card">
+                    <div class="radio"></div>
+                    <div class="name">User Roles</div>
+                  </div>
+                  <div class="resource-card">
+                    <div class="radio"></div>
+                    <div class="name">Users</div>
+                  </div>
+                </div>
+
+                <div class="unsupported-list">
+                  <div class="head">Not yet supported for import</div>
+                  <div class="items">
+                    <span>· Service Organizations</span>
+                    <span>· Devices</span>
+                    <span>· Organization Properties</span>
+                    <span>· Device Properties</span>
+                    <span>· Device Assets</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+            <div class="card-actions">
+              <div style="display:flex; gap:12px; align-items:center;">
+                <span class="pill-toggle on" title="Validate the CSV without writing to N-central">
+                  <span class="icon">!</span>Dry-run<span class="switch"></span>
+                </span>
+                <span class="meta">12 rows in <strong style="color: var(--color-text-secondary)">customers.csv</strong></span>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-secondary">Back</button>
+                <button class="btn btn-primary">Run dry-run →<span class="kbd">↵</span></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annotation">
+        <strong>Changes:</strong> 5 supported resources get equal real-estate; the 5 unsupported ones become a quiet inline list (much less visual weight); the <em>Dry-run</em> toggle is a prominent banner so the safety rail is impossible to miss; the primary CTA label changes to match the toggle state ("Run dry-run" vs "Start import"). Templates moved out of every resource card into a single <em>CSV templates ▾</em> menu — removes 5 redundant buttons and lets users grab a starter file <em>before</em> picking a resource. <strong>Service Org</strong> is now a typeahead combobox populated from the connected server's discovered SOs — a numeric ID typed directly is still accepted as a fallback for power users.
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────  RUN / RESULTS  ──────────────────────── -->
+    <div class="screen-frame">
+      <div class="screen-label"><strong>4 · Running &amp; Results</strong> <span>Summary chips first, log collapses below</span></div>
+      <div class="app-window">
+        <div class="app-header">
+          <div class="brand"><span class="accent">N-xport</span><span class="ver">v0.1.19</span></div>
+          <div class="header-trail">
+            <span class="conn-chip"><span class="dot"></span>Connected<span class="sep"></span><span class="so">Acme · 50</span></span>
+            <button class="icon-btn" title="Settings">⚙</button>
+          </div>
+        </div>
+
+        <div class="page-title">
+          <h2>Dry-run <span class="accent">complete</span></h2>
+          <div class="step-pips">
+            <span class="pip done"><span class="dot"></span>Setup</span>
+            <span class="pip done"><span class="dot"></span>Configure</span>
+            <span class="pip current"><span class="dot"></span>Run</span>
+          </div>
+        </div>
+
+        <div class="page-body">
+          <div class="card">
+            <div class="card-pad">
+              <div class="summary-grid">
+                <div class="stat planned">
+                  <div class="count">9</div>
+                  <div class="label">Would create</div>
+                </div>
+                <div class="stat skipped">
+                  <div class="count">2</div>
+                  <div class="label">Would skip</div>
+                </div>
+                <div class="stat errored">
+                  <div class="count">1</div>
+                  <div class="label">Would error</div>
+                </div>
+                <div class="stat" style="border-color: var(--color-border);">
+                  <div class="count">12</div>
+                  <div class="label">Rows read</div>
+                </div>
+              </div>
+
+              <div class="progress-row">
+                <span class="phase">Complete</span>
+                <div class="progress-bar-wrap"><div style="width:100%; background: var(--color-success);"></div></div>
+                <span class="pct" style="color: var(--color-success)">100%</span>
+              </div>
+
+              <div class="log-toggle">
+                <div class="title">Activity log <span style="color: var(--color-text-muted); font-weight: 400; font-size: 12px;">· 47 entries</span></div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                  <button class="btn-link">Verbose</button>
+                  <button class="btn-link">Export ↓</button>
+                  <span class="chev">▾</span>
+                </div>
+              </div>
+              <div class="log-panel">
+                <div class="line"><span class="ts">23:14:02</span><span class="lvl planned">Planned</span><span class="msg">Row 2 — Acme Co — Would create customer under SO #50</span></div>
+                <div class="line"><span class="ts">23:14:02</span><span class="lvl planned">Planned</span><span class="msg">Row 3 — Beta Industries — Would create customer under SO #50</span></div>
+                <div class="line"><span class="ts">23:14:02</span><span class="lvl skipped">Skipped</span><span class="msg">Row 4 — Existing Co — Customer already exists (ID: 1247)</span></div>
+                <div class="line"><span class="ts">23:14:02</span><span class="lvl error">Error</span><span class="msg">Row 5 — (blank) — customerName is required</span></div>
+                <div class="line"><span class="ts">23:14:02</span><span class="lvl planned">Planned</span><span class="msg">Row 6 — Gamma Corp — Would create customer under SO #50</span></div>
+                <div class="line"><span class="ts">23:14:02</span><span class="lvl info">Info</span><span class="msg">Dry-run finished: 9 planned, 2 would skip, 1 would error (of 12 rows)</span></div>
+              </div>
+
+              <div class="confirm-strip">
+                <div class="icon">⚠</div>
+                <div class="text">
+                  <strong>9 customers</strong> will be created in <strong>Acme</strong> (SO 50). 1 row had an error and will be skipped. This writes to the live server.
+                </div>
+                <button class="btn-danger">Apply for real →<span class="kbd">⌘↵</span></button>
+              </div>
+            </div>
+            <div class="card-actions">
+              <span class="meta">Dry-run only — nothing was written to N-central</span>
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-secondary">Back to configure</button>
+                <button class="btn btn-secondary">Re-run dry-run</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="annotation">
+        <strong>Changes:</strong> the summary card is the first thing you see on completion (no scrolling logs to find it); log panel is collapsible and scoped (no more competing with the summary for attention). After a dry-run, the path to writing for real is now an <strong>explicit confirmation strip</strong> — red border, contextual count + target SO name, danger-styled CTA. The footer keeps only safe actions (back, re-run dry-run), so a misclick can't write to a live server.
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────  RUN STATES GALLERY  ─────────────────── -->
+    <div class="screen-frame">
+      <div class="screen-label"><strong>4a · Run-screen states</strong> <span>The previous frame only shows dry-run-complete. Here are the three states that matter most for a live import.</span></div>
+      <div class="states-gallery cols-3">
+
+        <div class="state-cell">
+          <div class="cap"><span class="pulse-dot"></span> &nbsp; Running — live import in progress</div>
+          <div class="mini-stats">
+            <div class="ms created"><div class="c">5</div><div class="l">Created</div></div>
+            <div class="ms skipped"><div class="c">1</div><div class="l">Skipped</div></div>
+            <div class="ms errored"><div class="c">0</div><div class="l">Errored</div></div>
+            <div class="ms running"><div class="c">6/12</div><div class="l">Running</div></div>
+          </div>
+          <div class="mini-progress"><div style="width:55%; background: var(--color-accent);"></div></div>
+          <div class="mini-meta">
+            <span>Importing customers · Row 7 of 12</span>
+            <span>~8s left</span>
+          </div>
+          <div style="font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; color: var(--color-text-muted); padding: 8px 10px; background: var(--color-bg-code); border-radius: var(--radius-md);">
+            <div>23:14:09 <span style="color: var(--color-success);">CREATED</span> Row 6 — Gamma Corp (ID: 4321)</div>
+            <div>23:14:10 <span style="color: var(--color-accent);">RUNNING</span> Row 7 — Delta Ltd…</div>
+          </div>
+          <div class="mini-actions">
+            <button class="danger">Cancel</button>
+          </div>
+        </div>
+
+        <div class="state-cell">
+          <div class="cap" style="color: var(--color-success);">✓ &nbsp; Real-run complete — success</div>
+          <div class="mini-stats">
+            <div class="ms created"><div class="c">9</div><div class="l">Created</div></div>
+            <div class="ms skipped"><div class="c">3</div><div class="l">Skipped</div></div>
+            <div class="ms errored"><div class="c">0</div><div class="l">Errored</div></div>
+            <div class="ms" style="border-color: var(--color-border);"><div class="c">12</div><div class="l">Total</div></div>
+          </div>
+          <div class="mini-progress"><div style="width:100%; background: var(--color-success);"></div></div>
+          <div class="mini-meta">
+            <span>Finished in 14s · written to Acme (SO 50)</span>
+            <span style="color: var(--color-success);">100%</span>
+          </div>
+          <div class="mini-actions">
+            <button>Open log</button>
+            <button class="success">Done</button>
+          </div>
+        </div>
+
+        <div class="state-cell">
+          <div class="cap" style="color: var(--color-error);">! &nbsp; Real-run complete — partial errors</div>
+          <div class="mini-stats">
+            <div class="ms created"><div class="c">7</div><div class="l">Created</div></div>
+            <div class="ms skipped"><div class="c">3</div><div class="l">Skipped</div></div>
+            <div class="ms errored"><div class="c">2</div><div class="l">Errored</div></div>
+            <div class="ms" style="border-color: var(--color-border);"><div class="c">12</div><div class="l">Total</div></div>
+          </div>
+          <div class="mini-progress"><div style="width:100%; background: linear-gradient(90deg, var(--color-success) 70%, var(--color-error) 70%);"></div></div>
+          <div class="mini-meta">
+            <span style="color: var(--color-error);">2 rows failed — open log for detail</span>
+            <span style="color: var(--color-success);">100%</span>
+          </div>
+          <div class="mini-actions">
+            <button>Open log</button>
+            <button>Export errors as CSV</button>
+          </div>
+        </div>
+
+      </div>
+      <div class="annotation">
+        <strong>Why these matter:</strong> the running phase is where users feel anxious — show <em>what's happening now</em> + a clear cancel; the success state should feel rewarding (green throughout, summary chips relabel from "Would create" to "Created"); the partial-errors state needs an <em>Export errors as CSV</em> shortcut so the failed rows are immediately re-fixable. The "Apply for real" confirmation strip from the previous frame is now <em>gone</em> — once a real run kicks off, that pattern is replaced by these.
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────  SETTINGS POPOVER + PROFILE STATES  ──── -->
+    <div class="screen-frame">
+      <div class="screen-label"><strong>5 · Misc states</strong> <span>Settings menu, empty profiles, keyboard discoverability</span></div>
+      <div class="states-gallery cols-3">
+
+        <div class="state-cell">
+          <div class="cap">Settings — popover from header cog</div>
+          <div class="settings-pop">
+            <div class="item"><span>Theme</span><span class="v">Dark ▾</span></div>
+            <div class="item"><span>Default mode</span><span class="v">Export ▾</span></div>
+            <div class="item"><span>Verbose logs by default</span><span class="v">Off</span></div>
+            <div class="sep"></div>
+            <div class="item"><span>Manage profiles</span><span class="v">→</span></div>
+            <div class="item"><span>Permission CSV</span><span class="v">Built-in</span></div>
+            <div class="sep"></div>
+            <div class="item"><span>Check for updates</span><span class="v">v0.1.19</span></div>
+            <div class="item"><span>About &amp; docs</span><span class="v">→</span></div>
+          </div>
+        </div>
+
+        <div class="state-cell">
+          <div class="cap">Profiles — empty state (first launch)</div>
+          <div style="padding: 24px 12px; text-align: center; border: 1px dashed var(--color-border); border-radius: var(--radius-md); background: rgba(167,139,250,0.04);">
+            <div style="font-size: 28px; opacity: 0.4; margin-bottom: 8px;">∅</div>
+            <div style="font-size: 13px; font-weight: 500; margin-bottom: 4px;">No saved profiles yet</div>
+            <div style="font-size: 12px; color: var(--color-text-muted); margin-bottom: 14px;">Profiles store your server FQDN, username, and SO so you can re-connect with one click.</div>
+            <button class="btn btn-primary" style="font-size: 12px; padding: 7px 14px;">+ Create your first profile</button>
+          </div>
+        </div>
+
+        <div class="state-cell">
+          <div class="cap">Profiles — loading from settings.json</div>
+          <div style="padding: 8px 0;">
+            <div style="display:flex; gap:10px; align-items:center; padding: 10px 12px; border-radius: var(--radius-md); background: var(--color-bg-tertiary); margin-bottom: 6px;">
+              <span class="spinner" style="color: var(--color-accent);"></span>
+              <span style="font-size: 12px; color: var(--color-text-secondary);">Loading profiles…</span>
+            </div>
+            <!-- Skeleton rows -->
+            <div style="padding: 10px 12px; border-radius: var(--radius-md);">
+              <div style="height: 10px; width: 60%; background: var(--color-bg-tertiary); border-radius: 4px; margin-bottom: 6px;"></div>
+              <div style="height: 8px; width: 80%; background: var(--color-bg-tertiary); border-radius: 4px; opacity: 0.5;"></div>
+            </div>
+            <div style="padding: 10px 12px; border-radius: var(--radius-md);">
+              <div style="height: 10px; width: 40%; background: var(--color-bg-tertiary); border-radius: 4px; margin-bottom: 6px;"></div>
+              <div style="height: 8px; width: 65%; background: var(--color-bg-tertiary); border-radius: 4px; opacity: 0.5;"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="annotation">
+        <strong>Why:</strong> the settings cog has been on every screen with nowhere to go — it now has a defined contents (theme, default mode, profile management, updates). The empty profile state is the first thing a new user sees; it should explain what profiles <em>are</em> and have one obvious action. The loading skeleton avoids "no profiles!" flicker on cold launch while <code>settings.json</code> is still being read.
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
