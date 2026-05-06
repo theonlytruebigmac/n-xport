@@ -278,6 +278,52 @@ body {
   color: #525266;
 }
 
+.form-help {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.form-label-sm {
+  font-size: 0.625rem;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm, 4px);
+  transition: var(--transition-fast);
+}
+
+.btn-link:hover {
+  color: var(--color-accent-hover);
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.password-policy {
+  margin-top: var(--space-sm);
+  padding: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: rgba(167, 139, 250, 0.04);
+}
+
+.policy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+}
+
+.policy-field .form-input {
+  height: 34px;
+  padding: 4px 10px;
+}
+
 .form-input.mono {
   font-family: var(--font-mono);
   font-size: 0.875rem;

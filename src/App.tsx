@@ -18,8 +18,10 @@ import type {
   MigrationOptions,
   ProgressUpdate,
   LogEntry,
-  ExportType
+  ExportType,
+  PasswordPolicy
 } from './types';
+import { DEFAULT_PASSWORD_POLICY } from './types';
 
 function App() {
   // Connection state
@@ -60,6 +62,7 @@ function App() {
   const [importCsvPath, setImportCsvPath] = useState<string>('');
   const [importResource, setImportResource] = useState<string>('customers');
   const [importDryRun, setImportDryRun] = useState<boolean>(true);
+  const [passwordPolicy, setPasswordPolicyState] = useState<PasswordPolicy>(DEFAULT_PASSWORD_POLICY);
   const [lastImportResult, setLastImportResult] = useState<import('./types').ImportResult | null>(null);
 
   // Destination state (for migration)
@@ -83,7 +86,17 @@ function App() {
       loadExportTypes();
       setupEventListeners();
       getVersion().then(v => setAppVersion(v)).catch(() => setAppVersion('dev'));
+      api.getSettings()
+        .then(s => { if (s.passwordPolicy) setPasswordPolicyState(s.passwordPolicy); })
+        .catch(() => { /* keep defaults */ });
     }
+  }, []);
+
+  const setPasswordPolicy = useCallback((p: PasswordPolicy) => {
+    setPasswordPolicyState(p);
+    api.getSettings()
+      .then(s => api.saveSettings({ ...s, passwordPolicy: p }))
+      .catch(() => { /* non-fatal: in-memory value still applies for this session */ });
   }, []);
 
   // Keep the source connection chip in sync with the SO dropdown while connected.
@@ -468,7 +481,13 @@ function App() {
     addLog('info', `Starting ${dryRun ? 'dry-run import' : 'live import'}: ${importResource} into ${targetLabel} from ${importCsvPath}`);
 
     try {
-      const result = await api.startImport(importResource, importCsvPath, parseInt(serviceOrgId), dryRun);
+      const result = await api.startImport(
+        importResource,
+        importCsvPath,
+        parseInt(serviceOrgId),
+        dryRun,
+        importResource === 'users' ? passwordPolicy : undefined,
+      );
       setLastImportResult(result);
       addLog(result.success ? 'success' : 'warning', result.message);
     } catch (e) {
@@ -722,6 +741,8 @@ function App() {
               setSelectedResource={setImportResource}
               dryRun={importDryRun}
               setDryRun={setImportDryRun}
+              passwordPolicy={passwordPolicy}
+              setPasswordPolicy={setPasswordPolicy}
               onBack={() => setCurrentStep('setup')}
               addLog={addLog}
               connectedServiceOrgName={connectedServiceOrg?.name}

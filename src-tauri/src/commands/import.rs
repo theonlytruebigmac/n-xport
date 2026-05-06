@@ -10,7 +10,8 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::commands::connection::AppState;
+use crate::commands::connection::{AppState, CachedImportContext};
+use crate::config::PasswordPolicy;
 use crate::import::handlers::{
     import_access_group, import_customer, import_site, import_user, import_user_role,
     ImportContext,
@@ -102,6 +103,7 @@ pub async fn start_import(
     csv_path: String,
     service_org_id: i64,
     dry_run: bool,
+    password_policy: Option<PasswordPolicy>,
     state: State<'_, AppState>,
 ) -> Result<ImportResult, String> {
     let resource = ImportResource::from_id(&resource_type)
@@ -117,10 +119,26 @@ pub async fn start_import(
     let soap_guard = state.source_soap_client.lock().await;
     let soap = soap_guard.as_ref();
 
-    emit_progress(&app_handle, "Loading", "Building name lookups...", 5.0);
-    let mut ctx = ImportContext::load(&client, service_org_id)
-        .await
-        .map_err(|e| format!("Failed to load lookup tables: {}", e))?;
+    // Reuse a cached ImportContext from a previous run against the same SO if
+    // present — avoids a full re-fetch of customers/sites/roles/groups when the
+    // user clicks "Apply for real" right after a successful dry-run.
+    let mut ctx = {
+        let mut cache = state.import_context_cache.lock().await;
+        let cached_matches = cache
+            .as_ref()
+            .map(|c| c.service_org_id == service_org_id)
+            .unwrap_or(false);
+        if cached_matches {
+            emit_progress(&app_handle, "Loading", "Reusing cached name lookups...", 5.0);
+            emit_log(&app_handle, "info", "Reusing name lookups from previous run");
+            cache.take().expect("checked above").ctx
+        } else {
+            emit_progress(&app_handle, "Loading", "Building name lookups...", 5.0);
+            ImportContext::load(&client, service_org_id)
+                .await
+                .map_err(|e| format!("Failed to load lookup tables: {}", e))?
+        }
+    };
 
     emit_progress(&app_handle, "Parsing", "Reading CSV...", 10.0);
     let path = PathBuf::from(&csv_path);
@@ -244,12 +262,28 @@ pub async fn start_import(
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
-                let outcome =
-                    import_user(row_number, row, &mut ctx, soap, dry_run, &app_handle).await;
+                let outcome = import_user(
+                    row_number,
+                    row,
+                    &mut ctx,
+                    soap,
+                    dry_run,
+                    password_policy.as_ref(),
+                    &app_handle,
+                )
+                .await;
                 report(&outcome);
                 outcomes.push(outcome);
             }
         }
+    }
+
+    // Store the (possibly mutated) ctx back so the next start_import call for
+    // the same SO can reuse it. Mutations from live runs (e.g. newly-created
+    // customer IDs registered into the lookup) are persisted intentionally.
+    {
+        let mut cache = state.import_context_cache.lock().await;
+        *cache = Some(CachedImportContext { service_org_id, ctx });
     }
 
     let mut created = 0;

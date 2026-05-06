@@ -17,6 +17,7 @@ use super::{
     UserImportRow, UserRoleImportRow,
 };
 use crate::api::{NcClient, NcSoapClient, UserAddInfo};
+use crate::config::PasswordPolicy;
 use crate::models::*;
 
 /// Pre-fetched lookup data needed across most handlers.
@@ -737,6 +738,7 @@ pub async fn import_user(
     ctx: &mut ImportContext,
     soap: Option<&NcSoapClient>,
     dry_run: bool,
+    password_policy: Option<&PasswordPolicy>,
     _app: &AppHandle,
 ) -> RowOutcome {
     // N-central uses the email as the login name. The CSV intentionally has no
@@ -878,24 +880,41 @@ pub async fn import_user(
         access_group_ids: group_ids,
     };
 
-    match soap.user_add(login, &info).await {
+    match soap.user_add(login, &info, password_policy).await {
         Ok(id) if id > 0 => RowOutcome {
             row_number,
             status: RowStatus::Created,
             label: login.to_string(),
             message: format!("Created user (ID: {}) at {} (OU {})", id, scope_label, dest_ou),
         },
+        // N-central's userAdd returns -1 (with no SOAP fault) when it refuses
+        // to create the user — the most common cause is that a user with this
+        // login already exists at or above the target OU. Surface as Skipped
+        // so re-running the same CSV doesn't tally these as errors.
         Ok(id) => RowOutcome {
             row_number,
-            status: RowStatus::Error,
+            status: RowStatus::Skipped,
             label: login.to_string(),
-            message: format!("SOAP returned non-positive ID: {}", id),
+            message: format!(
+                "User not created (server returned ID {}); likely already exists at or above {} (OU {})",
+                id, scope_label, dest_ou
+            ),
         },
-        Err(e) => RowOutcome {
-            row_number,
-            status: RowStatus::Error,
-            label: login.to_string(),
-            message: format!("Failed: {}", e),
-        },
+        Err(e) => {
+            let msg = e.to_string();
+            // If a SOAP fault explicitly mentions duplication, also classify as Skipped.
+            let is_duplicate = msg.to_lowercase().contains("already exists")
+                || msg.to_lowercase().contains("duplicate");
+            RowOutcome {
+                row_number,
+                status: if is_duplicate { RowStatus::Skipped } else { RowStatus::Error },
+                label: login.to_string(),
+                message: if is_duplicate {
+                    format!("User already exists: {}", msg)
+                } else {
+                    format!("Failed: {}", msg)
+                },
+            }
+        }
     }
 }

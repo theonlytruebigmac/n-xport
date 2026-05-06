@@ -10,6 +10,7 @@ import type {
     MigrationOptions,
     ImportType,
     ImportResult,
+    PasswordPolicy,
     ServiceOrg
 } from './types';
 
@@ -132,7 +133,8 @@ export async function startImport(
     resourceType: string,
     csvPath: string,
     serviceOrgId: number,
-    dryRun: boolean
+    dryRun: boolean,
+    passwordPolicy?: PasswordPolicy
 ): Promise<ImportResult> {
-    return invoke('start_import', { resourceType, csvPath, serviceOrgId, dryRun });
+    return invoke('start_import', { resourceType, csvPath, serviceOrgId, dryRun, passwordPolicy });
 }

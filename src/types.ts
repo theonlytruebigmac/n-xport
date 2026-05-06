@@ -22,7 +22,24 @@ export interface Settings {
   exportDirectory?: string;
   exportFormats: string[];
   window: WindowState;
+  passwordPolicy?: PasswordPolicy;
 }
+
+export interface PasswordPolicy {
+  minLength: number;
+  minDigits: number;
+  minSpecial: number;
+  minUppercase: number;
+  minLowercase: number;
+}
+
+export const DEFAULT_PASSWORD_POLICY: PasswordPolicy = {
+  minLength: 8,
+  minDigits: 1,
+  minSpecial: 3,
+  minUppercase: 1,
+  minLowercase: 1,
+};
 
 export interface WindowState {
   width: number;

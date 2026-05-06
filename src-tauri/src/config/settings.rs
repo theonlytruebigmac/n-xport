@@ -95,6 +95,31 @@ impl Profile {
     }
 }
 
+/// Password complexity policy used to seed generated passwords during user
+/// import. Mirrors the relevant fields from N-central's Password Settings page
+/// so admins can match a target tenant's policy when defaults don't satisfy it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordPolicy {
+    pub min_length: u32,
+    pub min_digits: u32,
+    pub min_special: u32,
+    pub min_uppercase: u32,
+    pub min_lowercase: u32,
+}
+
+impl Default for PasswordPolicy {
+    fn default() -> Self {
+        Self {
+            min_length: 8,
+            min_digits: 1,
+            min_special: 3,
+            min_uppercase: 1,
+            min_lowercase: 1,
+        }
+    }
+}
+
 /// Application settings
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +137,10 @@ pub struct Settings {
     /// Window state
     #[serde(default)]
     pub window: WindowState,
+    /// Persisted password complexity policy for user imports. Survives between
+    /// sessions; per-instance tweaks are saved here so the UI can recall them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_policy: Option<PasswordPolicy>,
 }
 
 /// Window state for persistence

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import * as api from '../api';
-import type { ImportType, LogEntry } from '../types';
+import type { ImportType, LogEntry, PasswordPolicy } from '../types';
+import { DEFAULT_PASSWORD_POLICY } from '../types';
 import { ServiceOrgCombobox } from './ServiceOrgCombobox';
 
 interface ImportPanelProps {
@@ -13,11 +14,21 @@ interface ImportPanelProps {
     setSelectedResource: (id: string) => void;
     dryRun: boolean;
     setDryRun: (v: boolean) => void;
+    passwordPolicy: PasswordPolicy;
+    setPasswordPolicy: (p: PasswordPolicy) => void;
     onBack: () => void;
     addLog: (level: LogEntry['level'], message: string) => void;
     /** Optional, used to display the SO name immediately while the discovery list loads. */
     connectedServiceOrgName?: string;
 }
+
+const POLICY_FIELDS: Array<{ key: keyof PasswordPolicy; label: string; min: number; max: number }> = [
+    { key: 'minLength', label: 'Minimum password length', min: 1, max: 128 },
+    { key: 'minSpecial', label: 'Minimum special characters', min: 0, max: 32 },
+    { key: 'minDigits', label: 'Minimum digits', min: 0, max: 32 },
+    { key: 'minUppercase', label: 'Minimum uppercase characters', min: 0, max: 32 },
+    { key: 'minLowercase', label: 'Minimum lowercase characters', min: 0, max: 32 },
+];
 
 export function ImportPanel({
     serviceOrgId,
@@ -28,6 +39,8 @@ export function ImportPanel({
     setSelectedResource,
     dryRun,
     setDryRun,
+    passwordPolicy,
+    setPasswordPolicy,
     onBack,
     addLog,
     connectedServiceOrgName,
@@ -167,6 +180,44 @@ export function ImportPanel({
                     </div>
                 )}
             </div>
+
+            {selectedResource === 'users' && (
+                <div className="form-group password-policy">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <label className="form-label" style={{ marginBottom: 0 }}>Password Complexity</label>
+                        <button
+                            type="button"
+                            className="btn btn-link"
+                            onClick={() => setPasswordPolicy(DEFAULT_PASSWORD_POLICY)}
+                            title="Reset to N-central defaults"
+                        >
+                            Reset
+                        </button>
+                    </div>
+                    <p className="form-help" style={{ marginTop: 0, marginBottom: 12 }}>
+                        Match the target server's policy (System &gt; Administration &gt; User Management &gt; Password Settings). Generated passwords will satisfy all minimums below.
+                    </p>
+                    <div className="policy-grid">
+                        {POLICY_FIELDS.map(({ key, label, min, max }) => (
+                            <div key={key} className="policy-field">
+                                <label className="form-label form-label-sm">{label}</label>
+                                <input
+                                    type="number"
+                                    className="form-input"
+                                    min={min}
+                                    max={max}
+                                    value={passwordPolicy[key]}
+                                    onChange={(e) => {
+                                        const raw = parseInt(e.target.value, 10);
+                                        const v = Number.isFinite(raw) ? Math.max(min, Math.min(max, raw)) : min;
+                                        setPasswordPolicy({ ...passwordPolicy, [key]: v });
+                                    }}
+                                />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="card-actions">
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>

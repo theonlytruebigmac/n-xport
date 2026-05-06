@@ -9,6 +9,15 @@ use tokio::sync::Mutex;
 use crate::api::NcClient;
 use crate::api::NcSoapClient;
 use crate::credentials::CredentialStore;
+use crate::import::handlers::ImportContext;
+
+/// Cached name-lookup tables from a previous import. Keyed by the SO they were
+/// built for so a dry-run → live-run transition (same SO, seconds apart) can
+/// reuse the same context instead of re-fetching every customer/site/role.
+pub struct CachedImportContext {
+    pub service_org_id: i64,
+    pub ctx: ImportContext,
+}
 
 /// Shared client state
 pub struct AppState {
@@ -20,6 +29,10 @@ pub struct AppState {
     pub dest_soap_client: Arc<Mutex<Option<NcSoapClient>>>,
     /// Cancellation token for long-running operations
     pub cancel_token: Arc<AtomicBool>,
+    /// Cached ImportContext from the most recent import. Survives across
+    /// `start_import` calls so a follow-up live run after a successful dry-run
+    /// skips the lookup-build phase. Cleared on disconnect.
+    pub import_context_cache: Arc<Mutex<Option<CachedImportContext>>>,
 }
 
 impl Default for AppState {
@@ -30,6 +43,7 @@ impl Default for AppState {
             dest_client: Arc::new(Mutex::new(None)),
             dest_soap_client: Arc::new(Mutex::new(None)),
             cancel_token: Arc::new(AtomicBool::new(false)),
+            import_context_cache: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -332,6 +346,7 @@ pub async fn disconnect(state: State<'_, AppState>) -> std::result::Result<(), S
     *state.source_soap_client.lock().await = None;
     *state.dest_client.lock().await = None;
     *state.dest_soap_client.lock().await = None;
+    *state.import_context_cache.lock().await = None;
     Ok(())
 }
 

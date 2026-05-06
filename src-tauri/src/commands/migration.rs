@@ -1192,7 +1192,7 @@ async fn migrate_users(
             };
             let unmapped_roles = !source_user.role_ids.is_empty() && mapped_roles.is_empty();
 
-            match soap.user_add(&source_user.login_name, &user_info).await {
+            match soap.user_add(&source_user.login_name, &user_info, None).await {
                 Ok(id) => {
                     if id > 0 {
                         mapping

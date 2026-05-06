@@ -6,6 +6,8 @@
 use reqwest::Client;
 use std::time::Duration;
 
+use crate::config::PasswordPolicy;
+
 /// SOAP API endpoint path
 const SOAP_ENDPOINT: &str = "/dms2/services2/ServerEI2";
 
@@ -93,11 +95,16 @@ impl NcSoapClient {
     }
 
     /// Build SOAP envelope for userAdd
-    fn build_user_add_envelope(&self, username: &str, info: &UserAddInfo) -> String {
+    fn build_user_add_envelope(
+        &self,
+        username: &str,
+        info: &UserAddInfo,
+        policy: Option<&PasswordPolicy>,
+    ) -> String {
         let mut settings = Vec::new();
 
         // Generate strong password meeting requirements first (mandatory)
-        let new_user_password = generate_strong_password();
+        let new_user_password = generate_strong_password(policy);
 
         // Mandatory fields (per N-Central SOAP API docs)
         settings.push(("email", info.email.clone()));
@@ -205,9 +212,16 @@ impl NcSoapClient {
 
     /// Add a new user via SOAP API
     ///
-    /// Returns the new user's ID on success
-    pub async fn user_add(&self, username: &str, info: &UserAddInfo) -> Result<i64, SoapError> {
-        let envelope = self.build_user_add_envelope(username, info);
+    /// Returns the new user's ID on success. `policy` lets callers seed the
+    /// generated password with stricter minimums than the defaults; pass `None`
+    /// to use built-in defaults.
+    pub async fn user_add(
+        &self,
+        username: &str,
+        info: &UserAddInfo,
+        policy: Option<&PasswordPolicy>,
+    ) -> Result<i64, SoapError> {
+        let envelope = self.build_user_add_envelope(username, info, policy);
 
         tracing::info!(
             "SOAP userAdd request to {} (base_url: {})",
@@ -518,35 +532,47 @@ impl NcSoapClient {
     }
 }
 
-/// Generate a strong password meeting N-Central requirements
-/// Requirements: At least 8 characters, 1 number, 1 uppercase, 1 lowercase, 1 special
-fn generate_strong_password() -> String {
+/// Generate a strong password that satisfies the supplied [`PasswordPolicy`]
+/// (or built-in defaults if `policy` is `None`). The total length is
+/// `max(policy.min_length, sum of category minimums + slack)`, so the result is
+/// guaranteed to meet every category minimum *and* the length requirement.
+///
+/// Special-character set excludes XML-unsafe chars (&, <, >, ", ') so the value
+/// can be embedded directly in the SOAP envelope without further escaping.
+fn generate_strong_password(policy: Option<&PasswordPolicy>) -> String {
     use rand::Rng;
 
-    // Character sets
+    let default_policy = PasswordPolicy::default();
+    let p = policy.unwrap_or(&default_policy);
+
     let upper: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let lower: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
     let numbers: &[u8] = b"0123456789";
-    // Restrict to characters safe across XML escaping and all N-central password policies.
-    // Excludes XML-special chars (&, <, >, ", ') that can corrupt SOAP payloads.
     let special: &[u8] = b"!@#$%^*_-+=";
 
     let mut rng = rand::thread_rng();
 
-    let mut password = Vec::with_capacity(12);
+    let category_total = p.min_uppercase + p.min_lowercase + p.min_digits + p.min_special;
+    // Always leave at least 4 chars of random slack so the password isn't
+    // entirely category-constrained — looks more natural and avoids edge cases
+    // where a tenant adds a stricter rule we don't model yet.
+    let target_len = p.min_length.max(category_total + 4) as usize;
 
-    // Ensure one of each required type. N-central policy requires at least 3 special chars
-    // so push 3 to guarantee compliance regardless of the random fill.
-    password.push(upper[rng.gen_range(0..upper.len())]);
-    password.push(lower[rng.gen_range(0..lower.len())]);
-    password.push(numbers[rng.gen_range(0..numbers.len())]);
-    password.push(special[rng.gen_range(0..special.len())]);
-    password.push(special[rng.gen_range(0..special.len())]);
-    password.push(special[rng.gen_range(0..special.len())]);
+    let mut password: Vec<u8> = Vec::with_capacity(target_len);
 
-    // Fill remaining 6 chars (total 12) from all character sets
+    let push_n = |dst: &mut Vec<u8>, set: &[u8], n: u32, rng: &mut rand::rngs::ThreadRng| {
+        for _ in 0..n {
+            dst.push(set[rng.gen_range(0..set.len())]);
+        }
+    };
+
+    push_n(&mut password, upper, p.min_uppercase, &mut rng);
+    push_n(&mut password, lower, p.min_lowercase, &mut rng);
+    push_n(&mut password, numbers, p.min_digits, &mut rng);
+    push_n(&mut password, special, p.min_special, &mut rng);
+
     let all_chars: Vec<u8> = [upper, lower, numbers, special].concat();
-    for _ in 0..6 {
+    while password.len() < target_len {
         password.push(all_chars[rng.gen_range(0..all_chars.len())]);
     }
 
