@@ -9,15 +9,11 @@ use crate::error::{AppError, Result};
 /// Profile type: export (single connection) or migration (dual connection)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ProfileType {
+    #[default]
     Export,
     Migration,
-}
-
-impl Default for ProfileType {
-    fn default() -> Self {
-        ProfileType::Export
-    }
 }
 
 /// A single connection configuration
@@ -141,6 +137,10 @@ pub struct Settings {
     /// sessions; per-instance tweaks are saved here so the UI can recall them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_policy: Option<PasswordPolicy>,
+    /// The user opted in to keeping credentials in a passphrase-encrypted file when the OS
+    /// keychain is unavailable. Off by default: without it, nothing is written to disk.
+    #[serde(default)]
+    pub allow_disk_credentials: bool,
 }
 
 /// Window state for persistence

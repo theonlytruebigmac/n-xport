@@ -2,7 +2,7 @@
 // Run with: cargo run --bin nc-export -- [args]
 
 use clap::Parser;
-use nc_data_export_lib::cli::{Cli, runner};
+use nc_data_export_lib::cli::{runner, Cli};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -10,12 +10,14 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::WARN.into())
+                .add_directive(tracing::Level::WARN.into()),
         )
         .init();
 
+    nc_data_export_lib::init_credential_storage();
+
     let cli = Cli::parse();
-    
+
     if cli.verbose {
         tracing::info!("Verbose mode enabled");
     }

@@ -1,14 +1,14 @@
 //! Connection-related Tauri commands
 
 use serde::Serialize;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
 
 use crate::api::NcClient;
 use crate::api::NcSoapClient;
-use crate::credentials::CredentialStore;
+use crate::credentials::{CredentialStore, StorageBackend};
 use crate::import::handlers::ImportContext;
 
 /// Cached name-lookup tables from a previous import. Keyed by the SO they were
@@ -45,6 +45,23 @@ impl Default for AppState {
             cancel_token: Arc::new(AtomicBool::new(false)),
             import_context_cache: Arc::new(Mutex::new(None)),
         }
+    }
+}
+
+impl AppState {
+    /// Drop everything tied to the source connection: the REST and SOAP clients and
+    /// the import lookup cache (which holds IDs from that server, so it must never
+    /// outlive the connection it was built from).
+    pub async fn clear_source(&self) {
+        *self.client.lock().await = None;
+        *self.source_soap_client.lock().await = None;
+        *self.import_context_cache.lock().await = None;
+    }
+
+    /// Drop the destination REST and SOAP clients.
+    pub async fn clear_destination(&self) {
+        *self.dest_client.lock().await = None;
+        *self.dest_soap_client.lock().await = None;
     }
 }
 
@@ -148,6 +165,11 @@ pub async fn test_connection(
             .trim_start_matches("http://")
     );
 
+    // Connecting replaces the source connection. Clear the previous one first so a
+    // failed attempt cannot leave the old server connected behind a "disconnected" UI,
+    // and so lookups cached from the old server are never reused for the new one.
+    state.clear_source().await;
+
     match establish_connection(&fqdn, &jwt).await {
         Ok((client, result)) => {
             *state.client.lock().await = Some(client);
@@ -176,8 +198,17 @@ pub async fn connect_with_profile(
     // Get JWT from keychain
     let jwt = match CredentialStore::get_jwt(&profile_name) {
         Ok(Some(jwt)) => jwt,
-        Ok(None) => return Ok(ConnectionResult::failure("No saved credentials for this profile")),
-        Err(e) => return Ok(ConnectionResult::failure(format!("Failed to retrieve credentials: {}", e))),
+        Ok(None) => {
+            return Ok(ConnectionResult::failure(
+                "No saved credentials for this profile",
+            ))
+        }
+        Err(e) => {
+            return Ok(ConnectionResult::failure(format!(
+                "Failed to retrieve credentials: {}",
+                e
+            )))
+        }
     };
 
     test_connection(fqdn, jwt, username, state).await
@@ -196,6 +227,9 @@ pub async fn connect_destination(
         fqdn.trim_start_matches("https://")
             .trim_start_matches("http://")
     );
+
+    // Same rule as the source: a failed attempt must not leave the old destination live.
+    state.clear_destination().await;
 
     match establish_connection(&fqdn, &jwt).await {
         Ok((client, mut result)) => {
@@ -217,45 +251,46 @@ pub async fn connect_destination(
     }
 }
 
+/// Result of saving credentials: where they ended up, and what the user should be told.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCredentialsResult {
+    /// Where the JWT was stored.
+    pub storage: StorageBackend,
+    /// Present when something needs the user's attention (insecure fallback storage,
+    /// or an optional password that could not be saved).
+    pub warning: Option<String>,
+}
+
 /// Save credentials (JWT and optional Password) for a profile
 #[tauri::command]
 pub async fn save_credentials(
     profile_name: String,
     jwt: String,
     password: Option<String>,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<SaveCredentialsResult, String> {
     let jwt = jwt.trim().to_string();
 
-    // Store JWT
-    if let Err(e) = CredentialStore::store_jwt(&profile_name, &jwt) {
-        tracing::error!(
-            "Failed to save JWT to keyring for '{}': {}",
-            profile_name,
-            e
-        );
-        return Err(format!(
-            "Failed to save credentials: {}. Please ensure your system keyring is available.",
-            e
-        ));
-    }
+    let storage = CredentialStore::store_jwt(&profile_name, &jwt).map_err(|e| {
+        tracing::error!("Failed to save JWT for '{}': {}", profile_name, e);
+        format!("Failed to save credentials: {}", e)
+    })?;
+    let mut warnings: Vec<String> = storage.warning().map(str::to_string).into_iter().collect();
 
-    // Store Password if provided
+    // The password is optional: a failure does not fail the save, but the user is told.
     if let Some(pwd) = password {
-        if let Err(e) = CredentialStore::store_password(&profile_name, &pwd) {
-            tracing::error!(
-                "Failed to save password to keyring for '{}': {}",
-                profile_name,
-                e
-            );
-            // Don't fail the whole operation, but log error
+        match CredentialStore::store_password(&profile_name, &pwd) {
+            Ok(password_storage) => {
+                if storage == StorageBackend::Keychain {
+                    warnings.extend(password_storage.warning().map(str::to_string));
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to save password for '{}': {}", profile_name, e);
+                warnings.push(format!("The password could not be saved: {}", e));
+            }
         }
     }
-
-    // Verification logic
-    tracing::info!(
-        "Successfully saved credentials to keyring for '{}'",
-        profile_name
-    );
 
     // Optional verification - warn but don't fail if it doesn't work
     // Linux Secret Service can have timing issues
@@ -271,20 +306,17 @@ pub async fn save_credentials(
             );
         }
     }
-    Ok(())
+
+    Ok(SaveCredentialsResult {
+        storage,
+        warning: (!warnings.is_empty()).then(|| warnings.join(" ")),
+    })
 }
 
-/// Check if credentials exist for a profile
+/// Check if credentials exist for a profile (keychain, then the fallback file)
 #[tauri::command]
 pub async fn has_credentials(profile_name: String) -> bool {
-    // Check keyring first
-    match CredentialStore::get_jwt(&profile_name) {
-        Ok(Some(_)) => return true,
-        _ => {}
-    }
-
-    // No fallback - keyring only
-    false
+    CredentialStore::has_jwt(&profile_name)
 }
 
 /// Get credentials for a profile
@@ -292,38 +324,32 @@ pub async fn has_credentials(profile_name: String) -> bool {
 pub async fn get_credentials(profile_name: String) -> std::result::Result<Option<String>, String> {
     tracing::info!("Getting credentials for '{}'", profile_name);
 
-    // Get credentials from OS keyring only (no fallback for security)
+    // Keychain first, then the fallback file
     match CredentialStore::get_jwt(&profile_name) {
         Ok(Some(jwt)) => {
-            tracing::info!("Found credentials in keyring for '{}'", profile_name);
+            tracing::info!("Found stored credentials for '{}'", profile_name);
             Ok(Some(jwt))
         }
         Ok(None) => {
-            tracing::warn!("No credentials in keyring for '{}'", profile_name);
+            tracing::warn!("No stored credentials for '{}'", profile_name);
             Ok(None)
         }
         Err(e) => {
-            tracing::error!("Keyring error for '{}': {}", profile_name, e);
+            tracing::error!("Credential lookup failed for '{}': {}", profile_name, e);
             Ok(None)
         }
     }
 }
 
-/// Delete credentials for a profile
+/// Delete credentials for a profile, including its destination credentials, from
+/// both the keychain and the fallback file. Fails if any copy could not be removed.
 #[tauri::command]
 pub async fn delete_credentials(profile_name: String) -> std::result::Result<(), String> {
     tracing::info!("Deleting credentials for '{}'", profile_name);
-
-    // Delete from keyring only (no fallback)
-    let _ = CredentialStore::delete_jwt(&profile_name);
-    let _ = CredentialStore::delete_password(&profile_name);
-
-    // Also delete destination credentials if they exist
-    let dest_profile = format!("{}_dest", profile_name);
-    let _ = CredentialStore::delete_jwt(&dest_profile);
-    let _ = CredentialStore::delete_password(&dest_profile);
-
-    Ok(())
+    CredentialStore::delete_profile_credentials(&profile_name).map_err(|e| {
+        tracing::error!("Failed to delete credentials for '{}': {}", profile_name, e);
+        format!("Some stored credentials could not be removed: {}", e)
+    })
 }
 
 /// Get password for a profile
@@ -342,11 +368,8 @@ pub async fn get_password(profile_name: String) -> std::result::Result<Option<St
 /// Disconnect (clear client)
 #[tauri::command]
 pub async fn disconnect(state: State<'_, AppState>) -> std::result::Result<(), String> {
-    *state.client.lock().await = None;
-    *state.source_soap_client.lock().await = None;
-    *state.dest_client.lock().await = None;
-    *state.dest_soap_client.lock().await = None;
-    *state.import_context_cache.lock().await = None;
+    state.clear_source().await;
+    state.clear_destination().await;
     Ok(())
 }
 
@@ -391,5 +414,96 @@ pub async fn list_service_orgs(
             .map(|so| serde_json::json!({ "id": so.so_id, "name": so.so_name }))
             .collect()),
         Err(e) => Err(format!("Failed to list service orgs: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::test::mock_app;
+    use tauri::Manager;
+
+    /// A host that refuses connections immediately, so connecting fails without a network.
+    const UNREACHABLE: &str = "127.0.0.1:1";
+
+    async fn connected_state() -> AppState {
+        let state = AppState::default();
+        *state.client.lock().await = Some(NcClient::new("https://old-source.example"));
+        *state.source_soap_client.lock().await =
+            Some(NcSoapClient::new("https://old-source.example", "old-jwt"));
+        *state.dest_client.lock().await = Some(NcClient::new("https://old-dest.example"));
+        *state.dest_soap_client.lock().await =
+            Some(NcSoapClient::new("https://old-dest.example", "old-jwt"));
+        *state.import_context_cache.lock().await = Some(CachedImportContext {
+            service_org_id: 50,
+            ctx: crate::import::handlers::ImportContext::for_tests(50),
+        });
+        state
+    }
+
+    async fn snapshot(state: &AppState) -> (bool, bool, bool, bool, bool) {
+        (
+            state.client.lock().await.is_some(),
+            state.source_soap_client.lock().await.is_some(),
+            state.import_context_cache.lock().await.is_some(),
+            state.dest_client.lock().await.is_some(),
+            state.dest_soap_client.lock().await.is_some(),
+        )
+    }
+
+    #[tokio::test]
+    async fn clearing_the_source_keeps_the_destination_and_drops_the_import_cache() {
+        let state = connected_state().await;
+        state.clear_source().await;
+        assert_eq!(snapshot(&state).await, (false, false, false, true, true));
+    }
+
+    #[tokio::test]
+    async fn clearing_the_destination_keeps_the_source() {
+        let state = connected_state().await;
+        state.clear_destination().await;
+        assert_eq!(snapshot(&state).await, (true, true, true, false, false));
+    }
+
+    #[tokio::test]
+    async fn a_failed_source_connection_does_not_leave_the_previous_server_connected() {
+        let app = mock_app();
+        app.manage(connected_state().await);
+        let state = app.state::<AppState>();
+
+        let result = test_connection(UNREACHABLE.into(), "new-jwt".into(), None, state.clone())
+            .await
+            .expect("command returns a result");
+
+        assert!(!result.success);
+        assert_eq!(
+            snapshot(&state).await,
+            (false, false, false, true, true),
+            "source and its import cache are gone; the destination is untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_destination_connection_does_not_leave_the_previous_destination_connected() {
+        let app = mock_app();
+        app.manage(connected_state().await);
+        let state = app.state::<AppState>();
+
+        let result = connect_destination(UNREACHABLE.into(), "new-jwt".into(), None, state.clone())
+            .await
+            .expect("command returns a result");
+
+        assert!(!result.success);
+        assert_eq!(snapshot(&state).await, (true, true, true, false, false));
+    }
+
+    #[tokio::test]
+    async fn disconnect_clears_both_connections_and_the_import_cache() {
+        let app = mock_app();
+        app.manage(connected_state().await);
+        let state = app.state::<AppState>();
+
+        disconnect(state.clone()).await.unwrap();
+        assert_eq!(snapshot(&state).await, (false, false, false, false, false));
     }
 }

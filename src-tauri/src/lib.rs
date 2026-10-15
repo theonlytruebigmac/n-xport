@@ -28,10 +28,34 @@ pub fn init_logging() {
         .init();
 }
 
+/// Apply the saved credential-storage opt-in, and move any credentials left in the old
+/// unencrypted-in-practice file into the keychain. Entries that cannot move yet stay readable
+/// where they are and move once encrypted file storage is turned on.
+pub fn init_credential_storage() {
+    match config::Settings::load() {
+        Ok(settings) => {
+            credentials::CredentialStore::set_disk_enabled(settings.allow_disk_credentials)
+        }
+        Err(e) => tracing::warn!("Could not read settings for credential storage: {}", e),
+    }
+    match credentials::CredentialStore::migrate_legacy_credentials() {
+        Ok(report) if report.to_keychain > 0 => {
+            tracing::info!("Moved {} credential(s) from the old file into the keychain", report.to_keychain)
+        }
+        Ok(report) if report.remaining > 0 => tracing::warn!(
+            "{} credential(s) are still in the old unencrypted file; turn on encrypted file storage to protect them",
+            report.remaining
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Could not migrate old credentials: {}", e),
+    }
+}
+
 /// Create the Tauri application
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_logging();
+    init_credential_storage();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -49,6 +73,11 @@ pub fn run() {
             commands::get_credentials,
             commands::get_password,
             commands::delete_credentials,
+            commands::get_credential_storage_status,
+            commands::enable_disk_credentials,
+            commands::unlock_credentials,
+            commands::lock_credentials,
+            commands::disable_disk_credentials,
             commands::disconnect,
             commands::get_service_org_info,
             commands::list_service_orgs,
