@@ -10,6 +10,8 @@ use tauri::{Emitter, State, Window};
 use crate::api::client::NcClient;
 use crate::commands::connection::AppState;
 use crate::export::{export_to_csv, export_to_json};
+pub(crate) mod registration_tokens;
+
 use crate::models::{
     AccessGroupCsvRow, Device, DeviceAsset, DevicePropertyCsvRow, ExportOptions, OrgPropertyCsvRow,
     ProgressUpdate, UserCsvRow, UserRoleCsvRow,
@@ -369,7 +371,8 @@ pub async fn start_export(
         || options.user_roles
         || options.org_properties
         || options.device_properties
-        || options.device_assets;
+        || options.device_assets
+        || options.registration_tokens;
 
     let mut valid_ou_ids: HashSet<i64> = HashSet::new();
     // Also track specific sets for better filtering logic
@@ -653,6 +656,22 @@ pub async fn start_export(
         }
     }
 
+    // Registration Tokens (one request per customer and site)
+    if !cancel_token.load(Ordering::Relaxed) && options.registration_tokens {
+        let rows = registration_tokens::fetch_registration_token_rows(
+            client,
+            &fetched_customers,
+            &fetched_sites,
+            &emit_progress,
+            &mut warnings,
+            &cancel_token,
+        )
+        .await;
+        out.write(&rows, "registration_tokens");
+        // The file holds live registration tokens: keep it private where the OS allows.
+        restrict_to_owner(&out.files_created, "registration_tokens");
+    }
+
     // Device Assets (iterate filtered devices with bounded concurrency)
     if !cancel_token.load(Ordering::Relaxed) && options.device_assets {
         emit_progress("Device Assets", "Fetching devices for asset scan...", 92.0);
@@ -776,6 +795,25 @@ pub async fn start_export(
         warnings,
         errors: out.errors,
     })
+}
+
+/// Make the files written for one export type readable only by the current user (macOS and
+/// Linux; Windows files already inherit the user's folder permissions).
+fn restrict_to_owner(files: &[String], stem: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for file in files
+            .iter()
+            .filter(|f| Path::new(f).file_stem().is_some_and(|s| s == stem))
+        {
+            if let Err(e) = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)) {
+                tracing::warn!("Could not restrict permissions on {}: {}", file, e);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (files, stem);
 }
 
 /// Get filtered devices in scope, reusing cached list if available.
@@ -909,7 +947,8 @@ pub fn get_export_types() -> Vec<serde_json::Value> {
         serde_json::json!({"id": "org_properties", "name": "Organization Properties", "default": true}),
         serde_json::json!({"id": "users", "name": "Users", "default": true}),
         serde_json::json!({"id": "device_properties", "name": "Device Properties", "default": false}),
-        serde_json::json!({"id": "device_assets", "name": "Device Assets (Hardware)", "default": false, "migrationComingSoon": true}),
+        serde_json::json!({"id": "device_assets", "name": "Device Assets", "default": false, "migrationComingSoon": true}),
+        serde_json::json!({"id": "registration_tokens", "name": "Registration Tokens", "default": false, "exportOnly": true}),
     ]
 }
 

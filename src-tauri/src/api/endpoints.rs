@@ -72,6 +72,11 @@ pub fn org_unit_user_roles(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/user-roles", org_unit_id)
 }
 
+/// Build URL for a customer or site registration token (other org unit types are rejected)
+pub fn org_unit_registration_token(org_unit_id: i64) -> String {
+    format!("/api/org-units/{}/registration-token", org_unit_id)
+}
+
 /// Build URL for org unit custom properties (list / paginated GET)
 pub fn org_unit_custom_properties(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/custom-properties", org_unit_id)

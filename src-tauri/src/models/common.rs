@@ -232,6 +232,8 @@ pub struct ExportOptions {
     pub device_properties: bool,
     pub users: bool,
     pub device_assets: bool,
+    #[serde(default)]
+    pub registration_tokens: bool,
 }
 
 /// Export format

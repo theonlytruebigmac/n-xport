@@ -122,7 +122,7 @@ pub fn get_import_types() -> Vec<serde_json::Value> {
         serde_json::json!({"id": "org_properties", "name": "Organization Properties", "supported": true}),
         serde_json::json!({"id": "users", "name": "Users", "supported": true}),
         serde_json::json!({"id": "device_properties", "name": "Device Properties", "supported": true}),
-        serde_json::json!({"id": "device_assets", "name": "Device Assets (Hardware)", "supported": false}),
+        serde_json::json!({"id": "device_assets", "name": "Device Assets", "supported": false}),
     ]
 }
 

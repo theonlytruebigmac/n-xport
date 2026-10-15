@@ -470,6 +470,16 @@ impl NcClient {
         self.get_all_pages(&path, 100, |_, _| {}).await
     }
 
+    /// Get the agent registration token of a customer or site. N-central rejects other
+    /// org unit types (service organizations).
+    pub async fn get_registration_token(&self, org_unit_id: i64) -> ApiResult<RegistrationToken> {
+        let path = endpoints::org_unit_registration_token(org_unit_id);
+        let value: serde_json::Value = self.get(&path).await?;
+        RegistrationToken::from_response(value).map_err(|e| {
+            crate::error::ApiError::InvalidResponse(format!("registration token response: {}", e))
+        })
+    }
+
     /// Get custom properties for a device
     pub async fn get_device_properties(&self, device_id: i64) -> ApiResult<Vec<DeviceProperty>> {
         let path = endpoints::device_custom_properties(device_id);

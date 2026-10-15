@@ -338,3 +338,168 @@ async fn live_records_serialize_through_the_export_shapes() {
         out.errors
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn only_the_named_export_files_are_made_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().unwrap();
+    let mut files = Vec::new();
+    for name in [
+        "registration_tokens.csv",
+        "registration_tokens.json",
+        "customers.csv",
+    ] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, "x").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        files.push(path.display().to_string());
+    }
+
+    super::restrict_to_owner(&files, "registration_tokens");
+
+    let mode = |name: &str| {
+        std::fs::metadata(dir.path().join(name))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode("registration_tokens.csv"), 0o600);
+    assert_eq!(mode("registration_tokens.json"), 0o600);
+    assert_eq!(mode("customers.csv"), 0o644);
+}
+
+mod registration_token_tests {
+    use super::super::registration_tokens::{fetch_registration_token_rows, token_targets};
+    use crate::models::{Customer, RegistrationToken, Site};
+    use crate::test_support::{authenticated_client, json_response, not_found, start};
+    use std::sync::atomic::AtomicBool;
+
+    fn customers() -> Vec<Customer> {
+        [
+            serde_json::json!({"customerId": 20, "customerName": "Zeta Co"}),
+            serde_json::json!({"customerId": 10, "customerName": "Acme"}),
+        ]
+        .into_iter()
+        .map(|v| serde_json::from_value(v).expect("customer fixture"))
+        .collect()
+    }
+
+    fn sites() -> Vec<Site> {
+        [
+            serde_json::json!({"siteId": 202, "siteName": "Zeta HQ", "parentId": 20}),
+            serde_json::json!({"siteId": 101, "siteName": "Acme West", "customerId": 10}),
+            serde_json::json!({"siteId": 100, "siteName": "Acme East", "customerid": 10}),
+            serde_json::json!({"siteId": 300, "siteName": "Orphan", "parentId": 999}),
+        ]
+        .into_iter()
+        .map(|v| serde_json::from_value(v).expect("site fixture"))
+        .collect()
+    }
+
+    #[test]
+    fn targets_are_customers_then_sites_by_name_with_their_customer() {
+        let targets = token_targets(&customers(), &sites());
+        let summary: Vec<_> = targets
+            .iter()
+            .map(|t| (t.org_unit_type, t.org_unit_id, t.customer_name.as_deref()))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("customer", 10, Some("Acme")),
+                ("customer", 20, Some("Zeta Co")),
+                ("site", 100, Some("Acme")),
+                ("site", 101, Some("Acme")),
+                ("site", 202, Some("Zeta Co")),
+                ("site", 300, None),
+            ]
+        );
+        // A site whose parent is not a known customer has no customer attached.
+        assert_eq!(targets[5].customer_id, None);
+        assert_eq!(targets[2].customer_id, Some(10));
+    }
+
+    #[test]
+    fn token_responses_are_read_with_or_without_the_data_envelope() {
+        let wrapped = serde_json::json!({"data": {
+            "registrationToken": "abc", "registrationTokenExpiryDate": "2026-01-01T00:00:00Z"}});
+        let bare = serde_json::json!({"registrationToken": "abc"});
+        let empty = serde_json::json!({"data": {}});
+
+        let token = RegistrationToken::from_response(wrapped).unwrap();
+        assert_eq!(token.registration_token.as_deref(), Some("abc"));
+        assert_eq!(
+            token.registration_token_expiry_date.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            RegistrationToken::from_response(bare)
+                .unwrap()
+                .registration_token
+                .as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            RegistrationToken::from_response(empty).unwrap(),
+            RegistrationToken::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn exports_every_token_and_turns_a_failure_into_a_warning() {
+        let server = start(|method, path, _| {
+            assert_eq!(method, "GET");
+            match path {
+                "/api/org-units/20/registration-token" => not_found(),
+                p if p.ends_with("/registration-token") => {
+                    let id = p
+                        .trim_start_matches("/api/org-units/")
+                        .trim_end_matches("/registration-token");
+                    json_response(serde_json::json!({"data": {
+                        "registrationToken": format!("token-{}", id),
+                        "registrationTokenExpiryDate": "2026-12-31T23:59:00Z"
+                    }}))
+                }
+                _ => not_found(),
+            }
+        })
+        .await;
+        let client = authenticated_client(&server).await;
+        let mut warnings = Vec::new();
+
+        let rows = fetch_registration_token_rows(
+            &client,
+            &customers(),
+            &sites(),
+            &|_, _, _| {},
+            &mut warnings,
+            &AtomicBool::new(false),
+        )
+        .await;
+
+        let tokens: Vec<_> = rows
+            .iter()
+            .map(|r| (r.org_unit_id, r.registration_token.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                (10, "token-10"),
+                (100, "token-100"),
+                (101, "token-101"),
+                (202, "token-202"),
+                (300, "token-300"),
+            ]
+        );
+        assert_eq!(rows[0].org_unit_type, "customer");
+        assert_eq!(rows[1].site_name.as_deref(), Some("Acme East"));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("customer Zeta Co"), "{}", warnings[0]);
+        assert_eq!(
+            server.count("GET", "/api/org-units/10/registration-token"),
+            1
+        );
+    }
+}
