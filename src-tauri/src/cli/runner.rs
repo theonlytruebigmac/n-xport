@@ -470,7 +470,7 @@ async fn resolve_connection(
                 anyhow::bail!("JWT required when using --server. Use --jwt or set NC_JWT env var")
             }
         };
-        return Ok((format!("https://{}", server), jwt));
+        return Ok((crate::commands::connection::server_url(&server), jwt));
     }
 
     // Otherwise, try to load from profile

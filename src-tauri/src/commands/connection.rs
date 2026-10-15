@@ -91,6 +91,26 @@ impl ConnectionResult {
     }
 }
 
+/// The https URL of a server from whatever was typed or pasted: with or without a scheme,
+/// surrounded by spaces, or followed by a slash or a page path.
+pub(crate) fn server_url(input: &str) -> String {
+    let trimmed = input.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let without_scheme = if lower.starts_with("https://") {
+        &trimmed[8..]
+    } else if lower.starts_with("http://") {
+        &trimmed[7..]
+    } else {
+        trimmed
+    };
+    let host = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    format!("https://{}", host)
+}
+
 /// Shared connection logic: normalize URL, authenticate, fetch server info & service org.
 /// Returns the connected client and a successful ConnectionResult on success.
 async fn establish_connection(
@@ -98,11 +118,7 @@ async fn establish_connection(
     jwt: &str,
 ) -> std::result::Result<(NcClient, ConnectionResult), ConnectionResult> {
     let jwt = jwt.trim();
-    let base_url = format!(
-        "https://{}",
-        fqdn.trim_start_matches("https://")
-            .trim_start_matches("http://")
-    );
+    let base_url = server_url(fqdn);
 
     let client = NcClient::new(&base_url);
 
@@ -159,11 +175,7 @@ pub async fn test_connection(
     username: Option<String>,
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
-    let base_url = format!(
-        "https://{}",
-        fqdn.trim_start_matches("https://")
-            .trim_start_matches("http://")
-    );
+    let base_url = server_url(&fqdn);
 
     // Connecting replaces the source connection. Clear the previous one first so a
     // failed attempt cannot leave the old server connected behind a "disconnected" UI,
@@ -222,11 +234,7 @@ pub async fn connect_destination(
     username: Option<String>,
     state: State<'_, AppState>,
 ) -> std::result::Result<ConnectionResult, String> {
-    let base_url = format!(
-        "https://{}",
-        fqdn.trim_start_matches("https://")
-            .trim_start_matches("http://")
-    );
+    let base_url = server_url(&fqdn);
 
     // Same rule as the source: a failed attempt must not leave the old destination live.
     state.clear_destination().await;
@@ -377,9 +385,23 @@ pub async fn disconnect(state: State<'_, AppState>) -> std::result::Result<(), S
 #[tauri::command]
 pub async fn get_service_org_info(
     service_org_id: i64,
+    destination: Option<bool>,
     state: State<'_, AppState>,
 ) -> std::result::Result<serde_json::Value, String> {
-    let client = state.client.lock().await;
+    get_service_org_info_for(&state, service_org_id, destination.unwrap_or(false)).await
+}
+
+async fn get_service_org_info_for(
+    state: &AppState,
+    service_org_id: i64,
+    destination: bool,
+) -> std::result::Result<serde_json::Value, String> {
+    let slot = if destination {
+        &state.dest_client
+    } else {
+        &state.client
+    };
+    let client = slot.lock().await;
 
     let client = match &*client {
         Some(c) => c,
@@ -396,12 +418,26 @@ pub async fn get_service_org_info(
 }
 
 /// List all service organizations the connected user can see.
-/// Used by the SO combobox to populate the typeahead.
+/// Used by the SO combobox to populate the typeahead. `destination` selects the destination
+/// server (migration) instead of the source.
 #[tauri::command]
 pub async fn list_service_orgs(
+    destination: Option<bool>,
     state: State<'_, AppState>,
 ) -> std::result::Result<Vec<serde_json::Value>, String> {
-    let client = state.client.lock().await;
+    list_service_orgs_for(&state, destination.unwrap_or(false)).await
+}
+
+async fn list_service_orgs_for(
+    state: &AppState,
+    destination: bool,
+) -> std::result::Result<Vec<serde_json::Value>, String> {
+    let slot = if destination {
+        &state.dest_client
+    } else {
+        &state.client
+    };
+    let client = slot.lock().await;
 
     let client = match &*client {
         Some(c) => c,
@@ -423,6 +459,28 @@ mod tests {
     use tauri::test::mock_app;
     use tauri::Manager;
 
+    #[test]
+    fn server_urls_are_cleaned_up() {
+        for typed in [
+            "nc.example.com",
+            "  nc.example.com  ",
+            "https://nc.example.com/",
+            "HTTPS://NC.example.com",
+            "http://nc.example.com",
+            "https://nc.example.com/dashboard?x=1#top",
+        ] {
+            assert_eq!(
+                server_url(typed).to_ascii_lowercase(),
+                "https://nc.example.com",
+                "typed: {typed:?}"
+            );
+        }
+        assert_eq!(
+            server_url("nc.example.com:8443"),
+            "https://nc.example.com:8443"
+        );
+    }
+
     /// A host that refuses connections immediately, so connecting fails without a network.
     const UNREACHABLE: &str = "127.0.0.1:1";
 
@@ -439,6 +497,65 @@ mod tests {
             ctx: crate::import::handlers::ImportContext::for_tests(50),
         });
         state
+    }
+
+    async fn server_with_orgs(name: &str, id: i64) -> crate::test_support::MockServer {
+        let body = serde_json::json!({
+            "data": [{ "soId": id, "soName": name }],
+            "totalPages": 1
+        });
+        crate::test_support::start(move |_, _, _| crate::test_support::json_response(body.clone()))
+            .await
+    }
+
+    #[tokio::test]
+    async fn service_orgs_come_from_the_server_the_caller_asked_about() {
+        let source = server_with_orgs("Source Org", 913).await;
+        let destination = server_with_orgs("Destination Org", 1059).await;
+        let state = AppState::default();
+        *state.client.lock().await = Some(crate::test_support::authenticated_client(&source).await);
+        *state.dest_client.lock().await =
+            Some(crate::test_support::authenticated_client(&destination).await);
+
+        let from_source = list_service_orgs_for(&state, false).await.unwrap();
+        let from_destination = list_service_orgs_for(&state, true).await.unwrap();
+
+        assert_eq!(from_source[0]["name"], "Source Org");
+        assert_eq!(from_destination[0]["name"], "Destination Org");
+        assert_eq!(from_destination[0]["id"], 1059);
+    }
+
+    #[tokio::test]
+    async fn a_destination_org_is_named_by_the_destination_server() {
+        let source = crate::test_support::start(|_, _, _| crate::test_support::not_found()).await;
+        let destination = crate::test_support::start(|_, path, _| {
+            if path == "/api/service-orgs/1059" {
+                crate::test_support::json_response(
+                    serde_json::json!({ "soId": 1059, "soName": "N-xport Demo Destination" }),
+                )
+            } else {
+                crate::test_support::not_found()
+            }
+        })
+        .await;
+        let state = AppState::default();
+        *state.client.lock().await = Some(crate::test_support::authenticated_client(&source).await);
+        *state.dest_client.lock().await =
+            Some(crate::test_support::authenticated_client(&destination).await);
+
+        let info = get_service_org_info_for(&state, 1059, true).await.unwrap();
+        assert_eq!(info["name"], "N-xport Demo Destination");
+        assert!(get_service_org_info_for(&state, 1059, false).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn listing_destination_orgs_needs_a_destination_connection() {
+        let state = AppState::default();
+        *state.client.lock().await = Some(NcClient::new("https://source.example"));
+        assert_eq!(
+            list_service_orgs_for(&state, true).await.unwrap_err(),
+            "Not connected"
+        );
     }
 
     async fn snapshot(state: &AppState) -> (bool, bool, bool, bool, bool) {
