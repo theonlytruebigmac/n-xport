@@ -76,3 +76,6 @@ coverage/
 
 # Sensitive Data Export
 nc_export/
+
+# Temp Folder
+temp/
