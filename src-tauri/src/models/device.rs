@@ -1,44 +1,4 @@
-use serde::{Deserialize, Serialize, Deserializer};
-
-fn option_string_or_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use serde::de::{self, Visitor};
-    
-    struct OptionStringOrBool;
-    
-    impl<'de> Visitor<'de> for OptionStringOrBool {
-        type Value = Option<bool>;
-        
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("null, string or boolean")
-        }
-        
-        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-        
-        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-        
-        fn visit_bool<E: de::Error>(self, v: bool) -> Result<Self::Value, E> {
-            Ok(Some(v))
-        }
-        
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            match v.to_lowercase().as_str() {
-                "true" | "1" | "yes" => Ok(Some(true)),
-                "false" | "0" | "no" => Ok(Some(false)),
-                "" => Ok(None),
-                _ => Err(de::Error::custom(format!("invalid boolean: {}", v)))
-            }
-        }
-    }
-    
-    deserializer.deserialize_any(OptionStringOrBool)
-}
+use serde::{Deserialize, Serialize};
 
 /// Device from /api/devices
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +31,10 @@ pub struct Device {
     pub discovered_name: Option<String>,
     #[serde(default)]
     pub last_logged_in_user: Option<String>,
-    #[serde(default, deserialize_with = "option_string_or_bool")]
+    #[serde(
+        default,
+        deserialize_with = "crate::models::common::option_bool_or_string"
+    )]
     pub still_logged_in: Option<bool>,
     #[serde(default)]
     pub license_mode: Option<String>,
@@ -93,13 +56,31 @@ pub struct Device {
     pub appliance_id: Option<i64>,
     #[serde(default)]
     pub last_appliance_checkin_time: Option<String>,
+    #[serde(default)]
+    pub last_appliance_checkin_time_local: Option<String>,
+    #[serde(default)]
+    pub device_status: Option<DeviceStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceStatus {
+    #[serde(default)]
+    pub state: Option<i32>,
+    #[serde(default)]
+    pub status: Option<i32>,
 }
 
 /// Device asset information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceAsset {
+    #[serde(default)]
     pub device_id: i64,
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
+    #[serde(default, rename = "_links")]
+    pub links: Option<std::collections::HashMap<String, serde_json::Value>>,
     #[serde(default)]
     pub computer_system: Option<ComputerSystem>,
     #[serde(default)]
@@ -171,4 +152,31 @@ pub struct DiskDriveInfo {
     pub size: Option<i64>,
     #[serde(default)]
     pub free_space: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Device;
+
+    #[test]
+    fn parses_openapi_device_status_and_local_checkin_fields() {
+        let device: Device = serde_json::from_value(serde_json::json!({
+            "deviceId": 42,
+            "lastApplianceCheckinTime": "2025-02-01T10:00:00Z",
+            "lastApplianceCheckinTimeLocal": "2025-02-01T05:00:00-05:00",
+            "deviceStatus": {
+                "state": 1,
+                "status": 2
+            }
+        }))
+        .expect("OpenAPI device fields should deserialize");
+
+        assert_eq!(
+            device.last_appliance_checkin_time_local.as_deref(),
+            Some("2025-02-01T05:00:00-05:00")
+        );
+        let status = device.device_status.expect("device status should be retained");
+        assert_eq!(status.state, Some(1));
+        assert_eq!(status.status, Some(2));
+    }
 }

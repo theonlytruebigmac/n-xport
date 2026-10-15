@@ -33,19 +33,25 @@ pub struct User {
     pub description: Option<String>,
     #[serde(rename = "isEnabled")]
     pub is_enabled: bool,
+    #[serde(default)]
     pub is_ldap: bool,
     pub is_locked: Option<bool>,
+    #[serde(default)]
     pub api_only_user: bool,
+    #[serde(default)]
     pub logged_in_user: bool,
+    #[serde(default)]
     pub read_only: bool,
+    #[serde(default)]
     pub support_user: bool,
+    #[serde(default)]
     pub two_factor_enabled: bool,
     pub current_sso_provider: Option<String>,
-    #[serde(serialize_with = "serialize_vec_to_string")]
+    #[serde(default, serialize_with = "serialize_vec_to_string")]
     pub access_group_ids: Vec<i64>,
-    #[serde(serialize_with = "serialize_vec_to_string")]
+    #[serde(default, serialize_with = "serialize_vec_to_string")]
     pub role_ids: Vec<i64>,
-    #[serde(serialize_with = "serialize_vec_to_string")]
+    #[serde(default, serialize_with = "serialize_vec_to_string")]
     pub customer_tree: Vec<String>,
     pub created_on: Option<String>,
     #[serde(default, deserialize_with = "option_string_or_i64")]
@@ -137,5 +143,49 @@ impl From<&User> for UserCsvRow {
             location,
             title,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::User;
+
+    #[test]
+    fn parses_openapi_user_example_and_defaults_omitted_optional_fields() {
+        let user: User = serde_json::from_value(serde_json::json!({
+            "firstName": "John",
+            "lastName": "Doe",
+            "apiOnlyUser": false,
+            "description": "Test account",
+            "isEnabled": true,
+            "isLdap": false,
+            "isLocked": false,
+            "loggedInUser": false,
+            "readOnly": false,
+            "supportUser": false,
+            "userId": 123,
+            "userName": "jdoe",
+            "accessGroupIds": [10, 11],
+            "currentSsoProvider": "None",
+            "customerTree": ["System", "Customer"],
+            "fullName": "John Doe",
+            "roleIds": [20],
+            "twoFactorEnabled": false
+        }))
+        .expect("OpenAPI user example should deserialize");
+
+        assert_eq!(user.login_name, "jdoe");
+        assert_eq!(user.access_group_ids, vec![10, 11]);
+        assert_eq!(user.role_ids, vec![20]);
+        assert!(user.is_enabled);
+
+        let sparse: User = serde_json::from_value(serde_json::json!({
+            "userId": 124,
+            "userName": "sparse",
+            "isEnabled": true
+        }))
+        .expect("optional OpenAPI fields should default when omitted");
+        assert!(sparse.role_ids.is_empty());
+        assert!(!sparse.two_factor_enabled);
     }
 }

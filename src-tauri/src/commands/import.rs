@@ -26,6 +26,7 @@ use crate::models::{LogMessage, ProgressUpdate};
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     pub success: bool,
+    pub cancelled: bool,
     pub message: String,
     pub dry_run: bool,
     pub rows_total: usize,
@@ -34,6 +35,21 @@ pub struct ImportResult {
     pub rows_errored: usize,
     pub rows_planned: usize,
     pub outcomes: Vec<RowOutcome>,
+}
+
+fn cancelled_result(dry_run: bool) -> ImportResult {
+    ImportResult {
+        success: false,
+        cancelled: true,
+        message: "Import cancelled before processing any rows".to_string(),
+        dry_run,
+        rows_total: 0,
+        rows_created: 0,
+        rows_skipped: 0,
+        rows_errored: 0,
+        rows_planned: 0,
+        outcomes: Vec::new(),
+    }
 }
 
 fn emit_progress(app: &AppHandle, phase: &str, message: &str, percent: f32) {
@@ -116,13 +132,16 @@ pub async fn start_import(
     };
     drop(client_guard);
 
+    state.cancel_token.store(false, std::sync::atomic::Ordering::Relaxed);
+    let cancel_token = state.cancel_token.clone();
+
     let soap_guard = state.source_soap_client.lock().await;
     let soap = soap_guard.as_ref();
 
     // Reuse a cached ImportContext from a previous run against the same SO if
     // present — avoids a full re-fetch of customers/sites/roles/groups when the
     // user clicks "Apply for real" right after a successful dry-run.
-    let mut ctx = {
+    let ctx = {
         let mut cache = state.import_context_cache.lock().await;
         let cached_matches = cache
             .as_ref()
@@ -131,13 +150,20 @@ pub async fn start_import(
         if cached_matches {
             emit_progress(&app_handle, "Loading", "Reusing cached name lookups...", 5.0);
             emit_log(&app_handle, "info", "Reusing name lookups from previous run");
-            cache.take().expect("checked above").ctx
+            Ok(cache.take().expect("checked above").ctx)
         } else {
             emit_progress(&app_handle, "Loading", "Building name lookups...", 5.0);
-            ImportContext::load(&client, service_org_id)
+            ImportContext::load(&client, service_org_id, &cancel_token)
                 .await
-                .map_err(|e| format!("Failed to load lookup tables: {}", e))?
         }
+    };
+    let mut ctx = match ctx {
+        Ok(ctx) => ctx,
+        Err(e) if e == "Import cancelled" => {
+            emit_progress(&app_handle, "Cancelled", "Import cancelled during lookup loading", 100.0);
+            return Ok(cancelled_result(dry_run));
+        }
+        Err(e) => return Err(format!("Failed to load lookup tables: {}", e)),
     };
 
     emit_progress(&app_handle, "Parsing", "Reading CSV...", 10.0);
@@ -174,6 +200,9 @@ pub async fn start_import(
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
             for (i, row) in rows.into_iter().enumerate() {
+                if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -192,6 +221,9 @@ pub async fn start_import(
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
             for (i, row) in rows.into_iter().enumerate() {
+                if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -209,6 +241,9 @@ pub async fn start_import(
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
             for (i, row) in rows.into_iter().enumerate() {
+                if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -234,6 +269,9 @@ pub async fn start_import(
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
             for (i, row) in rows.into_iter().enumerate() {
+                if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -259,6 +297,9 @@ pub async fn start_import(
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
             for (i, row) in rows.into_iter().enumerate() {
+                if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -300,9 +341,19 @@ pub async fn start_import(
     }
     let total = outcomes.len();
 
-    emit_progress(&app_handle, "Complete", "Import finished", 100.0);
+    let cancelled = cancel_token.load(std::sync::atomic::Ordering::Relaxed);
+    if cancelled {
+        emit_progress(&app_handle, "Cancelled", "Import cancelled; completed rows were kept", 100.0);
+    } else {
+        emit_progress(&app_handle, "Complete", "Import finished", 100.0);
+    }
 
-    let message = if dry_run {
+    let message = if cancelled {
+        format!(
+            "Import cancelled after processing {} rows: {} created, {} skipped, {} errored",
+            total, created, skipped, errored
+        )
+    } else if dry_run {
         format!(
             "Dry-run finished: {} planned, {} would skip, {} would error (of {} rows)",
             planned, skipped, errored, total
@@ -315,7 +366,8 @@ pub async fn start_import(
     };
 
     Ok(ImportResult {
-        success: errored == 0,
+        success: !cancelled && errored == 0,
+        cancelled,
         message,
         dry_run,
         rows_total: total,
@@ -325,4 +377,19 @@ pub async fn start_import(
         rows_planned: planned,
         outcomes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cancelled_result;
+
+    #[test]
+    fn cancellation_result_is_not_success_shaped() {
+        let result = cancelled_result(false);
+        assert!(result.cancelled);
+        assert!(!result.success);
+        assert_eq!(result.rows_total, 0);
+        assert!(result.outcomes.is_empty());
+        assert!(result.message.contains("cancelled"));
+    }
 }

@@ -28,6 +28,14 @@ pub struct CustomerImportRow {
     #[serde(default)]
     pub contact_phone: Option<String>,
     #[serde(default)]
+    pub contact_phone_ext: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub contact_title: Option<String>,
+    #[serde(default)]
+    pub contact_department: Option<String>,
+    #[serde(default)]
     pub street1: Option<String>,
     #[serde(default)]
     pub street2: Option<String>,
@@ -59,6 +67,14 @@ pub struct SiteImportRow {
     pub contact_email: Option<String>,
     #[serde(default)]
     pub contact_phone: Option<String>,
+    #[serde(default)]
+    pub contact_phone_ext: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub contact_title: Option<String>,
+    #[serde(default)]
+    pub contact_department: Option<String>,
     #[serde(default)]
     pub street1: Option<String>,
     #[serde(default)]
@@ -213,6 +229,10 @@ pub fn write_template(resource: ImportResource, path: &Path) -> Result<()> {
                 contact_last_name: Some("Doe".into()),
                 contact_email: Some("jane@acme.example".into()),
                 contact_phone: Some("555-0100".into()),
+                contact_phone_ext: None,
+                phone: Some("555-0100".into()),
+                contact_title: Some("IT Manager".into()),
+                contact_department: Some("IT".into()),
                 street1: Some("123 Main St".into()),
                 street2: None,
                 city: Some("Springfield".into()),
@@ -230,6 +250,10 @@ pub fn write_template(resource: ImportResource, path: &Path) -> Result<()> {
                 contact_last_name: Some("Doe".into()),
                 contact_email: Some("jane@acme.example".into()),
                 contact_phone: Some("555-0100".into()),
+                contact_phone_ext: None,
+                phone: Some("555-0100".into()),
+                contact_title: Some("IT Manager".into()),
+                contact_department: Some("IT".into()),
                 street1: Some("123 Main St".into()),
                 street2: None,
                 city: Some("Springfield".into()),

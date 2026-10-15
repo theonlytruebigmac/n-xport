@@ -109,14 +109,59 @@ where
     deserializer.deserialize_any(OptionStringOrInt)
 }
 
+/// Helper to deserialize an optional boolean represented as a boolean or string
+pub fn option_bool_or_string<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct OptionBoolOrString;
+
+    impl<'de> Visitor<'de> for OptionBoolOrString {
+        type Value = Option<bool>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("null, boolean, or boolean string")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_bool<E: de::Error>(self, value: bool) -> Result<Self::Value, E> {
+            Ok(Some(value))
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+            match value.to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" => Ok(Some(true)),
+                "false" | "0" | "no" => Ok(Some(false)),
+                "" => Ok(None),
+                _ => Err(de::Error::custom(format!("invalid boolean: {value}"))),
+            }
+        }
+    }
+
+    deserializer.deserialize_any(OptionBoolOrString)
+}
+
 /// Pagination information from API responses
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PageInfo {
-    pub page: u32,
-    pub page_size: u32,
-    pub total_pages: u32,
-    pub total_items: u32,
+    #[serde(default, alias = "pageNumber")]
+    pub page: Option<u32>,
+    #[serde(default)]
+    pub page_size: Option<u32>,
+    #[serde(default)]
+    pub total_pages: Option<u32>,
+    #[serde(default)]
+    pub total_items: Option<u32>,
 }
 
 /// Standard paginated response wrapper
@@ -135,6 +180,42 @@ pub struct ApiLink {
     pub href: String,
     #[serde(rename = "type")]
     pub link_type: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PaginatedResponse;
+
+    #[test]
+    fn parses_openapi_pagination_fields() {
+        let response: PaginatedResponse<i32> = serde_json::from_value(serde_json::json!({
+            "data": [1, 2],
+            "pageNumber": 2,
+            "pageSize": 2,
+            "totalItems": 5
+        }))
+        .expect("OpenAPI pagination response should deserialize");
+
+        let page_info = response.page_info.expect("page metadata should be present");
+        assert_eq!(page_info.page, Some(2));
+        assert_eq!(page_info.page_size, Some(2));
+        assert_eq!(page_info.total_pages, None);
+        assert_eq!(page_info.total_items, Some(5));
+    }
+
+    #[test]
+    fn parses_list_response_with_only_total_items() {
+        let response: PaginatedResponse<i32> = serde_json::from_value(serde_json::json!({
+            "data": [1],
+            "totalItems": 1
+        }))
+        .expect("List response with only totalItems should deserialize");
+
+        assert_eq!(
+            response.page_info.and_then(|info| info.total_items),
+            Some(1)
+        );
+    }
 }
 
 /// Export options selected by user

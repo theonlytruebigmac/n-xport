@@ -233,6 +233,10 @@ The `RateLimiter` (`src-tauri/src/api/rate_limiter.rs`) uses Tokio semaphores to
 | **401/403 (Auth)** | Refresh token once, then fail |
 | **Timeout** | 60-second per-request timeout, no automatic retry |
 
+### Mocked API Coverage
+
+The Rust library tests run the REST client against a local mock HTTP server. They cover JWT authentication, paginated results with alternate metadata shapes and empty/final partial pages, documented pagination query parameters, 429 retry exhaustion, authentication/not-found/invalid-response errors, and the custom-property PUT path and body. Run them with `cd src-tauri && cargo test --lib`. These tests complement, but do not replace, validation against a representative N-central server.
+
 ### Pagination
 
 All list endpoints return paginated responses. The client automatically iterates all pages:
@@ -273,19 +277,29 @@ graph TD
 
 | Model | Key Fields | API Source |
 |-------|-----------|-----------|
-| `Device` | id, name, org_unit_id, device_class, os_name | `/api/devices` |
-| `DeviceAsset` | computer_system, bios, processor, memory, disk_drives | `/api/devices/{id}/assets` |
+| `Device` | id, name, org_unit_id, device_class, local check-in time, aggregate status | `/api/devices` |
+| `DeviceAsset` | Categorized asset data and response links in the `data` envelope | `/api/devices/{id}/assets` |
 | `DeviceProperty` | property_id, label, value | `/api/devices/{id}/custom-properties` |
 
-**DeviceAsset sub-types**: `ComputerSystem`, `BiosInfo`, `ProcessorInfo`, `MemoryInfo`, `DiskDriveInfo`, `NetworkAdapterInfo` — each representing a category of hardware telemetry.
+The asset endpoint returns a dynamic category map rather than a fixed hardware object. JSON retains the complete category map and response links; the CSV export maps known fields to its hardware columns and uses the requested device ID because the response may omit `deviceId`. Device aggregate status is represented as nested fields in JSON and flattened into `deviceStatusState` and `deviceStatusStatus` in CSV.
+
+List responses use `data` with pagination metadata that can include `pageNumber`, `pageSize`, and `totalItems` or `totalPages`. The client accepts these fields when present and continues fetching pages until the reported total is reached. Custom-property labels accept the API's `propertyName` field.
+
+Scope filtering includes SO, customer, and site IDs for devices. Site ownership accepts the documented camelCase fields and legacy alternate parent-link fields, including snake_case `service_orgid`.
 
 ### User & Access Models
 
 | Model | Key Fields | API Source |
 |-------|-----------|-----------|
 | `User` | id, email, username, role_ids, access_group_ids, is_enabled | `/api/users` |
-| `UserRole` | id, name, permission_names, role_type | `/api/user-roles` |
-| `AccessGroup` | id, name, member_usernames, org_unit_ids | `/api/access-groups` |
+| `UserRole` | id, name, permission names, user IDs, role flags | `/api/user-roles` |
+| `AccessGroup` | id, name, member IDs/usernames, org-unit/device IDs, auto-include flag | `/api/access-groups` |
+
+Role and access-group models accept documented boolean fields and retain their org-unit scope, group type, membership IDs, and permissions in exports. Property exports preserve enumerated values as arrays in JSON and delimited values in CSV. User boolean flags and arrays that are optional in the OpenAPI schema default safely when omitted.
+
+Role-creation requests encode permission IDs as strings, and organization access-group requests encode IDs and `autoIncludeNewOrgUnits` in the string forms declared by the OpenAPI request schemas. Device-based access-group import/migration is not attempted because device ID mapping is not implemented; imports reject those rows and migrations report manual follow-up.
+
+Create-request routes carry the parent customer/service-org/org-unit ID in the path, so customer and site request bodies intentionally omit `parentId`/`customerId`. Customer and site `licenseType` remains unset because it is not part of the current import template. Service-org/customer/site IDs accepted as either strings or numbers from API responses are normalized to integers in the exported JSON; custom-property names serialize using the API's `propertyName` key.
 
 ### Custom Properties
 
@@ -301,6 +315,7 @@ The `common.rs` module provides custom serialization functions for handling API 
 |--------|---------|
 | `string_or_i64()` | Deserialize fields that may be returned as either string or integer |
 | `option_string_or_i64()` | Optional variant of above |
+| `option_bool_or_string()` | Deserialize optional booleans returned as booleans or legacy strings |
 | `serialize_vec_to_string()` | Serialize `Vec<T>` as semicolon-separated string for CSV export |
 | `serialize_opt_vec_to_string()` | Optional variant of above |
 
@@ -350,7 +365,7 @@ sequenceDiagram
     Export->>FS: Write CSV files (RFC 4180)
     Export->>FS: Write JSON files (pretty-printed)
 
-    Export->>Tauri: ExportResult {files, record_counts, warnings, errors}
+    Export->>Tauri: ExportResult {files, record_counts, partial, warnings, errors}
     Tauri-->>GUI: emit("export-progress", completion)
     GUI->>GUI: Show completion summary
 ```
@@ -358,6 +373,10 @@ sequenceDiagram
 ### Multi-Phase Export Pipeline
 
 The export runs in four phases, each emitting progress events to the UI:
+
+`ExportResult.totalRecords` counts logical records written across the selected resource types. Each record is counted once even when both CSV and JSON are selected; it is not the combined number of rows across output files.
+
+An export with fetch warnings or output errors is marked `partial` and identified as a partial export in the completion panel. The panel shows warning/error counts and up to five details; the activity log contains the full issue list. A run with no output and errors is reported as failed rather than successful.
 
 **Phase 1 — Hierarchy Scan (0-10%)**
 
@@ -393,12 +412,7 @@ Write all collected data to the selected export formats (CSV, JSON, or both) in 
 
 ### Cancellation
 
-The `AppState` contains an `AtomicBool` cancel token. When the user clicks "Cancel Export":
-
-1. The frontend calls `invoke("cancel_export")`
-2. The Rust backend sets `cancel_token` to `true`
-3. The export loop checks `cancel_token` at each phase boundary and between API calls
-4. On cancellation, a partial export result is returned with a cancellation flag
+The `AppState` contains an `AtomicBool` cancellation token shared by export, import, and migration. When the user clicks **Cancel**, the frontend calls `invoke("cancel_export")` and the backend sets the token. Operations check it between phases and at safe work boundaries, including device fetches and import/migration rows. In-flight API calls are allowed to finish; no further work is started after the next cancellation check. Completed export files and destination changes are retained. Each command returns a distinct `cancelled` result instead of reporting success.
 
 ---
 
@@ -472,6 +486,10 @@ IdMapping {
 | 3 | **Access Groups** | REST POST (org-unit + device-type groups) | Skip if name already exists |
 | 4 | **Users** | REST POST, fallback to SOAP `userAdd` | Map roles & access groups via ID mappings |
 | 5 | **Org Properties** | REST PUT on mapped org units | Set values on destination org units |
+
+### Migration Outcomes
+
+`start_migration` returns `success`, `cancelled`, `issues`, `skipped`, and `manualFollowUp`. Failures and lookup-fetch errors are included in `issues`; existing resources are reported separately in `skipped`; limitations requiring operator action are listed in `manualFollowUp`. A run with any failures or manual follow-up is not reported as fully successful. Cancellation is reported separately and preserves changes already completed on the destination.
 
 ### SOAP Fallback for User Creation
 
@@ -624,7 +642,7 @@ The full set of commands exposed by the Rust backend:
 | | `set_active_profile(name)` / `get_active_profile()` | Active profile |
 | **Export** | `start_export(output_dir, options, formats, service_org_id)` | Begin export |
 | | `get_export_types()` | List available data types |
-| | `cancel_export()` | Stop running export |
+| | `cancel_export()` | Request cancellation of the running export, import, or migration |
 | | `open_directory(path)` | Open export folder in OS file manager |
 | **Migration** | `start_migration(options, source_so_id, dest_so_id)` | Begin migration |
 
@@ -739,7 +757,7 @@ The export pipeline is designed to produce partial results rather than fail comp
 - **Per-entity errors**: If fetching a specific device's properties fails, the error is logged as a warning and the export continues with the remaining devices
 - **Per-type errors**: If an entire entity type fails (e.g., all user fetches error), the warning is recorded and other entity types continue
 - **Warnings collection**: All non-fatal errors are collected into a warnings list and returned in the `ExportResult`
-- **Final report**: The completion summary shows total records exported, files created, and any warnings/errors encountered
+- **Final report**: The completion summary distinguishes complete, partial, failed, and cancelled runs, and shows total records, files, warning/error counts, and representative issue details
 
 ---
 
@@ -800,7 +818,7 @@ All N-Central API communication happens in Rust rather than in the frontend. Thi
 
 ### REST-First with SOAP Fallback
 
-The N-Central REST API is the primary integration point. SOAP is used only for `userAdd` during migration, because the REST API may not support all user creation scenarios. This dual-protocol approach maximizes compatibility while preferring the simpler REST interface.
+The N-Central REST API is the primary integration point. SOAP is required for user creation; customer and access-group operations may fall back to SOAP during import or migration, and non-service-org user-role creation may try SOAP first. Organization-property migration may fall back to SOAP. N-central may have SOAP APIs disabled by default, so the UI reminds users to enable them when a selected operation can call SOAP. Organization-property values use the documented `PUT /api/org-units/{orgUnitId}/custom-properties/{propertyId}` REST endpoint first.
 
 ### Concurrent Device Detail Fetching
 

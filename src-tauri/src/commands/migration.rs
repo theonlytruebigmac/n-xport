@@ -2,12 +2,25 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::api::client::NcClient;
 use crate::api::{NcSoapClient, UserAddInfo};
-use crate::commands::connection::{AppState, ConnectionResult};
+use crate::commands::connection::AppState;
 use crate::models::*;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationResult {
+    pub success: bool,
+    pub cancelled: bool,
+    pub issues: Vec<String>,
+    pub skipped: Vec<String>,
+    pub manual_follow_up: Vec<String>,
+    pub message: String,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +100,7 @@ fn fetch_or_warn<T, E: std::fmt::Display>(
     result: Result<Vec<T>, E>,
     app_handle: &AppHandle,
     context: &str,
+    failures: &mut Vec<String>,
 ) -> Vec<T> {
     match result {
         Ok(v) => v,
@@ -94,6 +108,7 @@ fn fetch_or_warn<T, E: std::fmt::Display>(
             let msg = format!("Fetch failed: {}: {}", context, e);
             tracing::warn!("{}", msg);
             emit_log(app_handle, "warning", &msg);
+            failures.push(msg);
             Vec::new()
         }
     }
@@ -111,18 +126,29 @@ async fn migrate_customers_and_sites(
     mapping: &mut IdMapping,
     soap_client: Option<&NcSoapClient>,
     app_handle: &AppHandle,
+    cancel_token: &Arc<AtomicBool>,
+    summary: &mut MigrationSummary,
 ) -> Result<(), String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     report_progress(app_handle, "Customers", "Fetching source customers...", 10.0);
     let source_customers = source
         .get_customers_by_so(source_so_id)
         .await
         .map_err(|e| format!("Failed to fetch source customers: {}", e))?;
+    if cancel_token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
 
     report_progress(app_handle, "Customers", "Fetching destination customers...", 15.0);
     let dest_customers = dest
         .get_customers_by_so(dest_so_id)
         .await
         .map_err(|e| format!("Failed to fetch destination customers: {}", e))?;
+    if cancel_token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
 
     let mut dest_name_map_raw = HashMap::new();
     for c in &dest_customers {
@@ -140,8 +166,6 @@ async fn migrate_customers_and_sites(
 
     use futures::stream::{self, StreamExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-
     let completed = Arc::new(AtomicUsize::new(0));
 
     let bodies = stream::iter(source_customers)
@@ -150,9 +174,13 @@ async fn migrate_customers_and_sites(
             let dest_name_map = dest_name_map.clone();
             let completed = completed.clone();
             let app_handle = app_handle.clone();
+            let cancel_token = cancel_token.clone();
 
             async move {
-                let dest_id = if let Some(&id) =
+                if cancel_token.load(Ordering::Relaxed) {
+                    return (source_cust.customer_id, 0, None, None);
+                }
+                let (dest_id, failure, skipped) = if let Some(&id) =
                     dest_name_map.get(&source_cust.customer_name.to_lowercase())
                 {
                     let msg = format!(
@@ -161,15 +189,32 @@ async fn migrate_customers_and_sites(
                     );
                     tracing::info!("{}", msg);
                     emit_log(&app_handle, "debug", &msg);
-                    id
+                    (
+                        id,
+                        None,
+                        Some(format!(
+                            "Customer '{}' already exists (ID: {})",
+                            source_cust.customer_name, id
+                        )),
+                    )
                 } else {
                     let payload = serde_json::json!({
                         "customerName": source_cust.customer_name,
-                        "parentId": dest_so_id,
                         "externalId": source_cust.external_id,
                         "contactFirstName": source_cust.contact_first_name,
                         "contactLastName": source_cust.contact_last_name,
                         "contactEmail": source_cust.contact_email,
+                        "contactPhone": source_cust.contact_phone,
+                        "contactPhoneExt": source_cust.contact_phone_ext,
+                        "phone": source_cust.phone,
+                        "contactTitle": source_cust.contact_title,
+                        "contactDepartment": source_cust.contact_department,
+                        "street1": source_cust.street1,
+                        "street2": source_cust.street2,
+                        "city": source_cust.city,
+                        "stateProv": source_cust.state_prov,
+                        "country": source_cust.country,
+                        "postalCode": source_cust.postal_code,
                     });
 
                     match dest.create_customer(dest_so_id, &payload).await {
@@ -181,7 +226,7 @@ async fn migrate_customers_and_sites(
                                 .or_else(|| resp["customerId"].as_i64())
                                 .or_else(|| resp["id"].as_i64())
                                 .unwrap_or(0);
-                            if id != 0 {
+                            if id > 0 {
                                 let msg = format!(
                                     "Created customer '{}' (ID: {})",
                                     source_cust.customer_name, id
@@ -196,9 +241,24 @@ async fn migrate_customers_and_sites(
                                 tracing::warn!("{}", msg);
                                 emit_log(&app_handle, "warning", &msg);
                             }
-                            id
+                            if id <= 0 {
+                                (0, Some(format!("Customer '{}' created without a destination ID", source_cust.customer_name)), None)
+                            } else {
+                                (id, None, None)
+                            }
                         }
                         Err(rest_err) => {
+                            if cancel_token.load(Ordering::Relaxed) {
+                                return (
+                                    source_cust.customer_id,
+                                    0,
+                                    Some(format!(
+                                        "Customer '{}' REST creation failed before cancellation: {}",
+                                        source_cust.customer_name, rest_err
+                                    )),
+                                    None,
+                                );
+                            }
                             // REST failed — try SOAP fallback
                             tracing::warn!("REST create_customer failed for '{}': {}. Trying SOAP fallback...", source_cust.customer_name, rest_err);
                             if let Some(soap) = soap_client {
@@ -211,23 +271,30 @@ async fn migrate_customers_and_sites(
                                     source_cust.contact_email.as_deref(),
                                 ).await {
                                     Ok(id) => {
-                                        let msg = format!("Created customer '{}' via SOAP (ID: {})", source_cust.customer_name, id);
-                                        tracing::info!("{}", msg);
-                                        emit_log(&app_handle, "success", &msg);
-                                        id
+                                        if id > 0 {
+                                            let msg = format!("Created customer '{}' via SOAP (ID: {})", source_cust.customer_name, id);
+                                            tracing::info!("{}", msg);
+                                            emit_log(&app_handle, "success", &msg);
+                                            (id, None, None)
+                                        } else {
+                                            (0, Some(format!(
+                                                "Customer '{}' SOAP creation returned invalid ID {}",
+                                                source_cust.customer_name, id
+                                            )), None)
+                                        }
                                     }
                                     Err(soap_err) => {
                                         let msg = format!("Failed to create customer '{}' (REST: {}, SOAP: {})", source_cust.customer_name, rest_err, soap_err);
                                         tracing::error!("{}", msg);
                                         emit_log(&app_handle, "error", &msg);
-                                        0
+                                        (0, Some(format!("Customer '{}' failed: REST: {}; SOAP: {}", source_cust.customer_name, rest_err, soap_err)), None)
                                     }
                                 }
                             } else {
                                 let msg = format!("Failed to create customer '{}': {}", source_cust.customer_name, rest_err);
                                 tracing::error!("{}", msg);
                                 emit_log(&app_handle, "error", &msg);
-                                0
+                                (0, Some(format!("Customer '{}' failed: {}", source_cust.customer_name, rest_err)), None)
                             }
                         }
                     }
@@ -246,17 +313,25 @@ async fn migrate_customers_and_sites(
                     },
                 );
 
-                (source_cust.customer_id, dest_id)
+                (source_cust.customer_id, dest_id, failure, skipped)
             }
         })
         .buffer_unordered(2);
 
-    let results: Vec<(i64, i64)> = bodies.collect().await;
+    let results: Vec<(i64, i64, Option<String>, Option<String>)> = bodies.collect().await;
 
-    for (source_id, dest_id) in results {
-        if dest_id != 0 {
+    for (source_id, dest_id, failure, skipped) in results {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
+        if dest_id > 0 {
             mapping.customers.insert(source_id, dest_id);
             mapping.org_units.insert(source_id, dest_id);
+        } else if let Some(failure) = failure {
+            summary.customers_failed.push(failure);
+        }
+        if let Some(skipped) = skipped {
+            summary.skipped.push(skipped);
         }
     }
 
@@ -265,20 +340,38 @@ async fn migrate_customers_and_sites(
 
     // --- Sites ---
     report_progress(app_handle, "Sites", "Fetching source sites...", 30.0);
+    let fetch_failures_before_source_sites = summary.fetch_failures.len();
+    if cancel_token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let source_sites = fetch_or_warn(
         source.get_sites_by_so(source_so_id).await,
         app_handle,
         &format!("source sites for SO {}", source_so_id),
+        &mut summary.fetch_failures,
     );
+    if cancel_token.load(Ordering::Relaxed)
+        || summary.fetch_failures.len() != fetch_failures_before_source_sites
+    {
+        return Ok(());
+    }
+    let fetch_failures_before_dest_sites = summary.fetch_failures.len();
     let dest_sites = fetch_or_warn(
         dest.get_sites_by_so(dest_so_id).await,
         app_handle,
         &format!("dest sites for SO {}", dest_so_id),
+        &mut summary.fetch_failures,
     );
+    if summary.fetch_failures.len() != fetch_failures_before_dest_sites {
+        return Ok(());
+    }
 
     // Build dest site lookup: (parent_customer_name, site_name) -> site_id
     let mut dest_site_lookup: HashMap<(String, String), i64> = HashMap::new();
     for site in &dest_sites {
+        if cancel_token.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let parent_id = site.parent_id.or(site.customer_id).or(site.customerid);
         if let Some(pid) = parent_id {
             if let Some(dest_cust) = dest_customers.iter().find(|c| c.customer_id == pid) {
@@ -294,6 +387,9 @@ async fn migrate_customers_and_sites(
     }
 
     for source_site in source_sites {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         let source_parent_id = source_site
             .parent_id
             .or(source_site.customer_id)
@@ -313,6 +409,7 @@ async fn migrate_customers_and_sites(
                     );
                     tracing::debug!("{}", msg);
                     emit_log(app_handle, "debug", &msg);
+                    summary.skipped.push(msg);
                 } else if let Some(&dest_cust_id) = mapping.customers.get(&src_parent_id) {
                     let msg = format!(
                         "Creating site '{}' under customer '{}' (dest customer ID: {})...",
@@ -328,6 +425,10 @@ async fn migrate_customers_and_sites(
                         "contactLastName": source_site.contact_last_name,
                         "contactEmail": source_site.contact_email,
                         "contactPhone": source_site.contact_phone,
+                        "contactPhoneExt": source_site.contact_phone_ext,
+                        "phone": source_site.phone,
+                        "contactTitle": source_site.contact_title,
+                        "contactDepartment": source_site.contact_department,
                         "street1": source_site.street1,
                         "street2": source_site.street2,
                         "city": source_site.city,
@@ -345,7 +446,7 @@ async fn migrate_customers_and_sites(
                                 .or_else(|| resp["siteId"].as_i64())
                                 .or_else(|| resp["id"].as_i64())
                                 .unwrap_or(0);
-                            if id != 0 {
+                            if id > 0 {
                                 mapping.sites.insert(source_site.site_id, id);
                                 mapping.org_units.insert(source_site.site_id, id);
                                 let msg = format!(
@@ -355,12 +456,20 @@ async fn migrate_customers_and_sites(
                                 tracing::info!("{}", msg);
                                 emit_log(app_handle, "success", &msg);
                             } else {
+                                summary.sites_failed.push(format!(
+                                    "Site '{}' created without a destination ID",
+                                    source_site.site_name
+                                ));
                                 let msg = format!("Site '{}' created but no ID returned in response: {:?}", source_site.site_name, resp);
                                 tracing::warn!("{}", msg);
                                 emit_log(app_handle, "warning", &msg);
                             }
                         }
                         Err(e) => {
+                            summary.sites_failed.push(format!(
+                                "Site '{}' failed: {}",
+                                source_site.site_name, e
+                            ));
                             let msg = format!(
                                 "Failed to create site '{}': {}",
                                 source_site.site_name, e
@@ -370,11 +479,25 @@ async fn migrate_customers_and_sites(
                         }
                     }
                 } else {
+                    summary.sites_failed.push(format!(
+                        "Site '{}' skipped because its parent customer is not mapped",
+                        source_site.site_name
+                    ));
                     let msg = format!("Site '{}' under customer '{}' skipped - parent customer not mapped to destination", source_site.site_name, src_cust_name);
                     tracing::warn!("{}", msg);
                     emit_log(app_handle, "warning", &msg);
                 }
+            } else {
+                summary.sites_failed.push(format!(
+                    "Site '{}' has an unmapped source parent customer {}",
+                    source_site.site_name, src_parent_id
+                ));
             }
+        } else {
+            summary.sites_failed.push(format!(
+                "Site '{}' has no source parent customer ID",
+                source_site.site_name
+            ));
         }
     }
 
@@ -401,7 +524,11 @@ async fn migrate_user_roles(
     summary: &mut MigrationSummary,
     soap_client: Option<&NcSoapClient>,
     app_handle: &AppHandle,
+    cancel_token: &AtomicBool,
 ) -> Result<(), String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     report_progress(app_handle, "Roles", "Loading permission mappings...", 28.0);
 
     let perm_csv = include_str!("../../rolePermissionIds.csv");
@@ -437,6 +564,9 @@ async fn migrate_user_roles(
     );
 
     for (idx, &(src_ou, dest_ou)) in org_unit_pairs.iter().enumerate() {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         let progress = 28.0 + (idx as f32 / total_ous as f32) * 12.0;
         let ou_label = if src_ou == source_so_id {
             "Service Org".to_string()
@@ -457,16 +587,28 @@ async fn migrate_user_roles(
             source.get_user_roles(src_ou).await,
             app_handle,
             &format!("source roles at {}", ou_label),
+            &mut summary.fetch_failures,
         );
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         if source_roles.is_empty() {
             continue;
         }
 
+        let fetch_failures_before_dest_roles = summary.fetch_failures.len();
         let dest_roles = fetch_or_warn(
             dest.get_user_roles(dest_ou).await,
             app_handle,
             &format!("dest roles at {}", ou_label),
+            &mut summary.fetch_failures,
         );
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
+        if summary.fetch_failures.len() != fetch_failures_before_dest_roles {
+            continue;
+        }
         let mut dest_name_map: HashMap<String, i64> = HashMap::new();
         for r in &dest_roles {
             if let Some(ref name) = r.role_name {
@@ -475,6 +617,9 @@ async fn migrate_user_roles(
         }
 
         for source_role in source_roles {
+            if cancel_token.load(Ordering::Relaxed) {
+                break;
+            }
             let role_name = source_role.role_name.as_deref().unwrap_or("Unknown Role");
             let role_name_lower = role_name.to_lowercase();
 
@@ -491,7 +636,11 @@ async fn migrate_user_roles(
                 );
                 tracing::debug!("{}", msg);
                 emit_log(app_handle, "debug", &msg);
+                summary.skipped.push(msg);
             } else {
+                if cancel_token.load(Ordering::Relaxed) {
+                    break;
+                }
                 let source_permissions = source_role.get_permissions();
                 let mut permission_ids: Vec<i64> =
                     if !perm_lookup.is_empty() && !source_permissions.is_empty() {
@@ -520,10 +669,12 @@ async fn migrate_user_roles(
                     .filter(|s| !s.is_empty())
                     .unwrap_or("Migrated role");
 
+                let permission_id_strings: Vec<String> =
+                    permission_ids.iter().map(ToString::to_string).collect();
                 let payload = serde_json::json!({
                     "roleName": role_name,
                     "description": description,
-                    "permissionIds": permission_ids,
+                    "permissionIds": permission_id_strings,
                     "userIds": []
                 });
 
@@ -568,7 +719,7 @@ async fn migrate_user_roles(
                     }
                 }
 
-                if !created {
+                if !created && !cancel_token.load(Ordering::Relaxed) {
                     // REST fallback (works well for SO-level roles; for others, re-fetch picks up the ID)
                     match dest.create_user_role(dest_ou, &payload).await {
                         Ok(resp) => {
@@ -609,12 +760,16 @@ async fn migrate_user_roles(
             }
         }
 
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         // Safety net: re-fetch dest roles to pick up any that were created but whose
         // IDs weren't captured from the create response. Match source roles by name.
         let refreshed_dest_roles = fetch_or_warn(
             dest.get_user_roles(dest_ou).await,
             app_handle,
             &format!("dest roles re-fetch at {}", ou_label),
+            &mut summary.fetch_failures,
         );
         let mut refreshed_name_map: HashMap<String, i64> = HashMap::new();
         for r in &refreshed_dest_roles {
@@ -628,6 +783,7 @@ async fn migrate_user_roles(
             source.get_user_roles(src_ou).await,
             app_handle,
             &format!("source roles re-fetch at {}", ou_label),
+            &mut summary.fetch_failures,
         );
         for source_role in &source_roles_refetch {
             if mapping.roles.contains_key(&source_role.role_id) {
@@ -678,7 +834,11 @@ async fn migrate_access_groups(
     summary: &mut MigrationSummary,
     soap_client: Option<&NcSoapClient>,
     app_handle: &AppHandle,
+    cancel_token: &AtomicBool,
 ) -> Result<(), String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     // Collect all dest org unit IDs (customers + sites) for SO-level access group scope
     let all_dest_ou_ids: Vec<String> = mapping
         .org_units
@@ -712,6 +872,9 @@ async fn migrate_access_groups(
     );
 
     for (idx, &(src_ou, dest_ou)) in org_unit_pairs.iter().enumerate() {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         let progress = 50.0 + (idx as f32 / total_ous as f32) * 15.0;
         let ou_label = if src_ou == source_so_id {
             "Service Org".to_string()
@@ -732,16 +895,28 @@ async fn migrate_access_groups(
             source.get_access_groups(src_ou).await,
             app_handle,
             &format!("source access groups at {}", ou_label),
+            &mut summary.fetch_failures,
         );
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         if source_groups.is_empty() {
             continue;
         }
 
+        let fetch_failures_before_dest_groups = summary.fetch_failures.len();
         let dest_groups = fetch_or_warn(
             dest.get_access_groups(dest_ou).await,
             app_handle,
             &format!("dest access groups at {}", ou_label),
+            &mut summary.fetch_failures,
         );
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
+        if summary.fetch_failures.len() != fetch_failures_before_dest_groups {
+            continue;
+        }
         let mut dest_name_map: HashMap<String, i64> = HashMap::new();
         for g in &dest_groups {
             if let Some(ref name) = g.group_name {
@@ -758,6 +933,9 @@ async fn migrate_access_groups(
         };
 
         for source_group in source_groups {
+            if cancel_token.load(Ordering::Relaxed) {
+                break;
+            }
             let group_name = source_group
                 .group_name
                 .as_deref()
@@ -786,8 +964,29 @@ async fn migrate_access_groups(
                 );
                 tracing::debug!("{}", msg);
                 emit_log(app_handle, "debug", &msg);
+                summary.skipped.push(msg);
             } else {
-                let group_type = source_group.group_type.as_deref().unwrap_or("ORG_UNIT");
+                let group_type = source_group.get_group_type().unwrap_or_else(|| "ORG_UNIT".into());
+                if group_type.eq_ignore_ascii_case("DEVICE") {
+                    let msg = format!(
+                        "Device access group '{}' at {} needs manual follow-up because device ID mapping is not implemented",
+                        group_name, ou_label
+                    );
+                    tracing::warn!("{}", msg);
+                    emit_log(app_handle, "warning", &msg);
+                    summary.additional_manual_follow_up.push(msg);
+                    continue;
+                }
+                if !group_type.eq_ignore_ascii_case("ORG_UNIT") {
+                    let msg = format!(
+                        "Access group '{}' at {} has unsupported type '{}' and needs manual follow-up",
+                        group_name, ou_label, group_type
+                    );
+                    tracing::warn!("{}", msg);
+                    emit_log(app_handle, "warning", &msg);
+                    summary.additional_manual_follow_up.push(msg);
+                    continue;
+                }
                 let description = source_group.group_description.as_deref().unwrap_or("");
 
                 // Use source _extra data for orgUnitIds and autoInclude when available,
@@ -805,7 +1004,8 @@ async fn migrate_access_groups(
 
                 let auto_include = source_group
                     .get_auto_include()
-                    .unwrap_or_else(|| "true".to_string());
+                    .unwrap_or(true)
+                    .to_string();
 
                 let payload = serde_json::json!({
                     "groupName": group_name,
@@ -820,11 +1020,9 @@ async fn migrate_access_groups(
                     group_name, ou_label, group_type, effective_ou_ids.len(), member_user_ids.len()
                 );
 
-                let result = if group_type == "DEVICE" {
-                    dest.create_device_access_group(dest_ou, &payload).await
-                } else {
-                    dest.create_org_unit_access_group(dest_ou, &payload).await
-                };
+                let result = dest
+                    .create_org_unit_access_group(dest_ou, &payload)
+                    .await;
 
                 match result {
                     Ok(resp) => {
@@ -860,6 +1058,9 @@ async fn migrate_access_groups(
                         }
                     }
                     Err(rest_err) => {
+                        if cancel_token.load(Ordering::Relaxed) {
+                            break;
+                        }
                         tracing::warn!(
                             "REST create access group failed for '{}': {}. Trying SOAP...",
                             group_name, rest_err
@@ -870,8 +1071,8 @@ async fn migrate_access_groups(
                                     group_name,
                                     description,
                                     dest_ou,
-                                    group_type,
-                                    true,
+                                    &group_type,
+                                    auto_include == "true",
                                 )
                                 .await
                             {
@@ -953,15 +1154,23 @@ async fn migrate_users(
     summary: &mut MigrationSummary,
     soap_client: Option<&NcSoapClient>,
     app_handle: &AppHandle,
+    cancel_token: &AtomicBool,
 ) -> Result<(), String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     // Build a complete source role_id -> role_name map across ALL org units
     report_progress(app_handle, "Users", "Fetching source users and roles...", 70.0);
     let mut source_role_id_to_name: HashMap<i64, String> = HashMap::new();
     for &src_ou in mapping.org_units.keys() {
+        if cancel_token.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let roles = fetch_or_warn(
             source.get_user_roles(src_ou).await,
             app_handle,
             &format!("source roles for OU {} (users phase)", src_ou),
+            &mut summary.fetch_failures,
         );
         for r in roles {
             if let Some(name) = r.role_name {
@@ -974,10 +1183,14 @@ async fn migrate_users(
     if mapping.role_names.is_empty() {
         tracing::info!("Role names map is empty - fetching destination roles to populate...");
         for &dest_ou in mapping.org_units.values() {
+            if cancel_token.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             let dest_roles = fetch_or_warn(
                 dest.get_user_roles(dest_ou).await,
                 app_handle,
                 &format!("dest roles for OU {} (populate role_names)", dest_ou),
+                &mut summary.fetch_failures,
             );
             for r in dest_roles {
                 if let Some(name) = r.role_name {
@@ -1002,12 +1215,20 @@ async fn migrate_users(
     // Build a global dest login map across all org units (to skip existing users)
     report_progress(app_handle, "Users", "Fetching destination users...", 73.0);
     let mut dest_login_map: HashMap<String, i64> = HashMap::new();
+    let fetch_failures_before_dest_users = summary.fetch_failures.len();
     for &dest_ou in mapping.org_units.values() {
+        if cancel_token.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let dest_users = fetch_or_warn(
             dest.get_users_by_org_unit(dest_ou).await,
             app_handle,
             &format!("dest users for OU {}", dest_ou),
+            &mut summary.fetch_failures,
         );
+        if summary.fetch_failures.len() != fetch_failures_before_dest_users {
+            return Ok(());
+        }
         for u in dest_users {
             dest_login_map.insert(u.login_name.to_lowercase(), u.user_id);
         }
@@ -1035,6 +1256,9 @@ async fn migrate_users(
     let mut seen_logins: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for (idx, &(src_ou, dest_ou)) in org_unit_pairs.iter().enumerate() {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         let progress = 73.0 + (idx as f32 / total_ous as f32) * 4.0;
         let ou_label = if src_ou == source_so_id {
             "Service Org".to_string()
@@ -1055,8 +1279,12 @@ async fn migrate_users(
             source.get_users_by_org_unit(src_ou).await,
             app_handle,
             &format!("source users at {}", ou_label),
+            &mut summary.fetch_failures,
         );
         for user in users {
+            if cancel_token.load(Ordering::Relaxed) {
+                break;
+            }
             let login_lower = user.login_name.to_lowercase();
             if seen_logins.contains(&login_lower) {
                 continue; // Skip duplicates (user may appear at parent OU too)
@@ -1079,6 +1307,9 @@ async fn migrate_users(
     // Create users
     let total = all_source_users.len();
     for (i, (source_user, dest_ou)) in all_source_users.into_iter().enumerate() {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         let progress = 77.0 + (i as f32 / total as f32) * 13.0;
         report_progress(
             app_handle,
@@ -1094,6 +1325,7 @@ async fn migrate_users(
             );
             tracing::info!("{}", msg);
             emit_log(app_handle, "debug", &msg);
+            summary.skipped.push(msg);
             // Still record access group membership so existing users are included in groups
             for &src_group_id in &source_user.access_group_ids {
                 mapping.access_group_members.entry(src_group_id).or_default().push(existing_id);
@@ -1254,7 +1486,12 @@ async fn migrate_org_properties(
     mapping: &IdMapping,
     soap_client: Option<&NcSoapClient>,
     app_handle: &AppHandle,
+    cancel_token: &AtomicBool,
+    summary: &mut MigrationSummary,
 ) -> Result<(), String> {
+    if cancel_token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     report_progress(app_handle, "Properties", "Migrating org custom properties...", 90.0);
 
     let source_props = source
@@ -1278,6 +1515,9 @@ async fn migrate_org_properties(
     let mut failed = 0;
 
     for prop in &source_props {
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
         // Determine the destination org unit ID
         let dest_ou_id = match prop.org_unit_id {
             Some(src_ou_id) => {
@@ -1286,29 +1526,51 @@ async fn migrate_org_properties(
                 } else if src_ou_id == source_so_id {
                     // Property belongs to the source SO root — skip or use a default
                     emit_log(app_handle, "debug", &format!("Property {:?} belongs to source SO root — skipped", prop.label));
+                    summary.properties_skipped.push(format!(
+                        "Property {:?} belongs to source SO root",
+                        prop.label
+                    ));
+                    summary.skipped.push(format!(
+                        "Property {:?} belongs to source SO root",
+                        prop.label
+                    ));
                     skipped += 1;
                     continue;
                 } else {
                     emit_log(app_handle, "debug", &format!("No mapping for source org unit {} (property: {:?}) — skipped", src_ou_id, prop.label));
+                    summary.properties_skipped.push(format!(
+                        "Property {:?} has no mapping for source org unit {}",
+                        prop.label, src_ou_id
+                    ));
+                    summary.skipped.push(format!(
+                        "Property {:?} has no mapping for source org unit {}",
+                        prop.label, src_ou_id
+                    ));
                     skipped += 1;
                     continue;
                 }
             }
             None => {
                 emit_log(app_handle, "debug", &format!("Property {:?} has no org_unit_id — skipped", prop.label));
+                summary
+                    .properties_skipped
+                    .push(format!("Property {:?} has no org unit ID", prop.label));
+                summary
+                    .skipped
+                    .push(format!("Property {:?} has no org unit ID", prop.label));
                 skipped += 1;
                 continue;
             }
         };
 
-        // Build the value payload for the destination
-        let value_payload = serde_json::json!({
-            "propertyId": prop.property_id,
-            "orgUnitId": dest_ou_id,
-            "value": prop.value,
-        });
-
-        match dest.set_custom_property_value(&value_payload).await {
+        let value = prop.value.as_deref().unwrap_or("");
+        let update_result = dest
+            .update_org_unit_property_value(dest_ou_id, prop.property_id, value)
+            .await;
+        if cancel_token.load(Ordering::Relaxed) {
+            break;
+        }
+        match update_result {
             Ok(_) => {
                 synced += 1;
                 emit_log(app_handle, "debug", &format!("Synced property {:?} to OU {}", prop.label, dest_ou_id));
@@ -1316,8 +1578,10 @@ async fn migrate_org_properties(
             Err(rest_err) => {
                 // REST failed — try SOAP fallback
                 if let Some(soap) = soap_client {
-                    let prop_value = prop.value.as_deref().unwrap_or("");
-                    match soap.organization_property_modify(dest_ou_id, prop.property_id, prop_value).await {
+                    match soap
+                        .organization_property_modify(dest_ou_id, prop.property_id, value)
+                        .await
+                    {
                         Ok(_) => {
                             synced += 1;
                             emit_log(app_handle, "debug", &format!("Synced property {:?} to OU {} via SOAP fallback", prop.label, dest_ou_id));
@@ -1329,6 +1593,7 @@ async fn migrate_org_properties(
                             );
                             tracing::warn!("{}", msg);
                             emit_log(app_handle, "debug", &msg);
+                            summary.properties_failed.push(msg);
                             failed += 1;
                         }
                     }
@@ -1339,6 +1604,7 @@ async fn migrate_org_properties(
                     );
                     tracing::warn!("{}", msg);
                     emit_log(app_handle, "debug", &msg);
+                    summary.properties_failed.push(msg);
                     failed += 1;
                 }
             }
@@ -1360,11 +1626,17 @@ async fn migrate_org_properties(
 /// Collects per-category outcomes for the post-migration summary report.
 #[derive(Default)]
 struct MigrationSummary {
+    customers_failed: Vec<String>,
+    sites_failed: Vec<String>,
     roles_failed: Vec<String>,
     /// Users created without any role because their source role(s) could not be mapped
     /// (e.g. system/built-in roles are not returned by the custom roles API).
     users_no_roles: Vec<(String, Vec<String>)>, // (login, source_role_ids as strings)
     users_failed: Vec<String>,
+    properties_failed: Vec<String>,
+    properties_skipped: Vec<String>,
+    fetch_failures: Vec<String>,
+    skipped: Vec<String>,
     /// Access groups successfully created on the destination (users included in payload).
     access_groups_created: Vec<String>,
     /// Access groups that already existed on the destination.
@@ -1372,6 +1644,69 @@ struct MigrationSummary {
     /// from the source were NOT added to these groups.
     access_groups_existed_not_updated: Vec<String>,
     access_groups_failed: Vec<String>,
+    additional_manual_follow_up: Vec<String>,
+}
+
+impl MigrationSummary {
+    fn issues(&self) -> Vec<String> {
+        self.customers_failed
+            .iter()
+            .chain(&self.sites_failed)
+            .chain(&self.roles_failed)
+            .chain(&self.users_failed)
+            .chain(&self.access_groups_failed)
+            .chain(&self.properties_failed)
+            .chain(&self.fetch_failures)
+            .cloned()
+            .collect()
+    }
+
+    fn manual_follow_up(&self) -> Vec<String> {
+        self.users_no_roles
+            .iter()
+            .map(|(login, roles)| {
+                format!(
+                    "User '{}' was created without mapped source roles ({})",
+                    login,
+                    roles.join(", ")
+                )
+            })
+            .chain(self.access_groups_existed_not_updated.iter().map(|group| {
+                format!(
+                    "Existing access group '{}' was not updated with migrated users",
+                    group
+                )
+            }))
+            .chain(self.additional_manual_follow_up.iter().cloned())
+            .chain(self.properties_skipped.iter().cloned())
+            .collect()
+    }
+}
+
+fn build_migration_result(summary: &MigrationSummary, cancelled: bool) -> MigrationResult {
+    let issues = summary.issues();
+    let manual_follow_up = summary.manual_follow_up();
+    let has_issues = !issues.is_empty() || !manual_follow_up.is_empty();
+    let message = if cancelled {
+        "Migration cancelled; completed changes were kept".to_string()
+    } else if has_issues {
+        format!(
+            "Migration completed with {} failure(s) and {} manual follow-up item(s)",
+            issues.len(),
+            manual_follow_up.len()
+        )
+    } else {
+        "Migration completed successfully".to_string()
+    };
+
+    MigrationResult {
+        success: !cancelled && !has_issues,
+        cancelled,
+        issues,
+        skipped: summary.skipped.clone(),
+        manual_follow_up,
+        message,
+    }
 }
 
 // ==================== Main Migration Command ====================
@@ -1383,7 +1718,10 @@ pub async fn start_migration(
     dest_so_id: i64,
     app_handle: AppHandle,
     state: State<'_, AppState>,
-) -> std::result::Result<ConnectionResult, String> {
+) -> std::result::Result<MigrationResult, String> {
+    state.cancel_token.store(false, Ordering::Relaxed);
+    let cancel_token = state.cancel_token.clone();
+
     let source_client = state.client.lock().await;
     let dest_client = state.dest_client.lock().await;
 
@@ -1407,12 +1745,12 @@ pub async fn start_migration(
 
     // 1. Customers & Sites
     if options.customers {
-        migrate_customers_and_sites(source, dest, source_so_id, dest_so_id, &mut mapping, soap_ref, &app_handle).await?;
+        migrate_customers_and_sites(source, dest, source_so_id, dest_so_id, &mut mapping, soap_ref, &app_handle, &cancel_token, &mut summary).await?;
     }
 
     // 2. User Roles (at all org unit levels)
-    if options.user_roles {
-        migrate_user_roles(source, dest, source_so_id, dest_so_id, &mut mapping, &mut summary, soap_ref, &app_handle).await?;
+    if options.user_roles && !cancel_token.load(Ordering::Relaxed) {
+        migrate_user_roles(source, dest, source_so_id, dest_so_id, &mut mapping, &mut summary, soap_ref, &app_handle, &cancel_token).await?;
     }
 
     // 3. Users — must run BEFORE access groups so their IDs are available.
@@ -1420,32 +1758,48 @@ pub async fn start_migration(
     // so users must exist first and their IDs passed in the create payload.
     // Users are fetched from every level (SO, each customer, each site) and
     // created at the exact same org unit level they occupy on the source.
-    if options.users {
-        migrate_users(source, dest, source_so_id, dest_so_id, &mut mapping, &mut summary, soap_ref, &app_handle).await?;
+    if options.users && !cancel_token.load(Ordering::Relaxed) {
+        migrate_users(source, dest, source_so_id, dest_so_id, &mut mapping, &mut summary, soap_ref, &app_handle, &cancel_token).await?;
     }
 
     // 4. Access Groups (at all org unit levels — after users so user IDs are available)
-    if options.access_groups {
-        migrate_access_groups(source, dest, source_so_id, dest_so_id, &mut mapping, &mut summary, soap_ref, &app_handle).await?;
+    if options.access_groups && !cancel_token.load(Ordering::Relaxed) {
+        migrate_access_groups(source, dest, source_so_id, dest_so_id, &mut mapping, &mut summary, soap_ref, &app_handle, &cancel_token).await?;
     }
 
     // 5. Custom Properties
-    if options.org_properties {
-        migrate_org_properties(source, dest, source_so_id, &mapping, soap_ref, &app_handle).await?;
+    if options.org_properties && !cancel_token.load(Ordering::Relaxed) {
+        migrate_org_properties(source, dest, source_so_id, &mapping, soap_ref, &app_handle, &cancel_token, &mut summary).await?;
     }
+
+    let cancelled = cancel_token.load(Ordering::Relaxed);
 
     // ── Post-migration summary ──────────────────────────────────────────────────
     emit_log(&app_handle, "info", "─────────────── Migration Summary ───────────────");
 
-    let has_issues = !summary.roles_failed.is_empty()
-        || !summary.users_failed.is_empty()
-        || !summary.users_no_roles.is_empty()
-        || !summary.access_groups_existed_not_updated.is_empty()
-        || !summary.access_groups_failed.is_empty();
+    let issues = summary.issues();
+    let manual_follow_up = summary.manual_follow_up();
+    let has_issues = !issues.is_empty() || !manual_follow_up.is_empty();
+
+    for issue in &summary.customers_failed {
+        emit_log(&app_handle, "error", issue);
+    }
+    for issue in &summary.sites_failed {
+        emit_log(&app_handle, "error", issue);
+    }
+    for issue in &summary.properties_failed {
+        emit_log(&app_handle, "error", issue);
+    }
+    for issue in &summary.fetch_failures {
+        emit_log(&app_handle, "warning", issue);
+    }
+    for item in &summary.properties_skipped {
+        emit_log(&app_handle, "warning", item);
+    }
 
     if !summary.roles_failed.is_empty() {
         emit_log(&app_handle, "warning", &format!(
-            "Roles not created ({}) — missing description in source: {}",
+            "Roles not created or mapped ({}): {}",
             summary.roles_failed.len(),
             summary.roles_failed.join(", ")
         ));
@@ -1498,21 +1852,84 @@ pub async fn start_migration(
         ));
     }
 
-    if !has_issues {
+    if cancelled {
+        emit_log(&app_handle, "warning", "Migration cancelled; completed changes were kept.");
+    } else if !has_issues {
         emit_log(&app_handle, "success", "All items migrated successfully — no action required.");
     }
 
     emit_log(&app_handle, "info", "─────────────────────────────────────────────────");
     // ────────────────────────────────────────────────────────────────────────────
 
-    report_progress(&app_handle, "Complete", "Migration finished successfully", 100.0);
+    let result = build_migration_result(&summary, cancelled);
+    report_progress(
+        &app_handle,
+        if cancelled { "Cancelled" } else { "Complete" },
+        &result.message,
+        100.0,
+    );
 
-    Ok(ConnectionResult {
-        success: true,
-        message: "Migration completed successfully".to_string(),
-        server_url: None,
-        server_version: None,
-        service_org_id: None,
-        service_org_name: None,
-    })
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_migration_result, MigrationSummary};
+
+    #[test]
+    fn migration_succeeds_only_when_there_are_no_failures_or_follow_ups() {
+        let result = build_migration_result(&MigrationSummary::default(), false);
+        assert!(result.success);
+        assert!(!result.cancelled);
+        assert!(result.issues.is_empty());
+        assert!(result.manual_follow_up.is_empty());
+    }
+
+    #[test]
+    fn partial_migration_reports_failures_and_manual_follow_ups() {
+        let summary = MigrationSummary {
+            sites_failed: vec!["Site A failed".to_string()],
+            skipped: vec!["Customer B already exists".to_string()],
+            access_groups_existed_not_updated: vec!["Operators (at Customer 1)".to_string()],
+            additional_manual_follow_up: vec!["Device group needs device ID mapping".to_string()],
+            ..MigrationSummary::default()
+        };
+
+        let result = build_migration_result(&summary, false);
+        assert!(!result.success);
+        assert!(!result.cancelled);
+        assert_eq!(result.issues, vec!["Site A failed".to_string()]);
+        assert_eq!(result.skipped, vec!["Customer B already exists".to_string()]);
+        assert_eq!(result.manual_follow_up.len(), 2);
+        assert!(result.message.contains("1 failure"));
+        assert!(result.message.contains("2 manual follow-up"));
+    }
+
+    #[test]
+    fn all_failures_are_reported_as_failure() {
+        let summary = MigrationSummary {
+            customers_failed: vec!["Customer A failed".to_string()],
+            sites_failed: vec!["Site A failed".to_string()],
+            roles_failed: vec!["Role A failed".to_string()],
+            users_failed: vec!["user.a".to_string()],
+            access_groups_failed: vec!["Group A failed".to_string()],
+            properties_failed: vec!["Property A failed".to_string()],
+            fetch_failures: vec!["Fetch failed: source users".to_string()],
+            ..MigrationSummary::default()
+        };
+
+        let result = build_migration_result(&summary, false);
+        assert!(!result.success);
+        assert_eq!(result.issues.len(), 7);
+        assert!(result.manual_follow_up.is_empty());
+        assert!(result.message.contains("7 failure(s)"));
+    }
+
+    #[test]
+    fn cancelled_migration_is_not_reported_as_success() {
+        let result = build_migration_result(&MigrationSummary::default(), true);
+        assert!(!result.success);
+        assert!(result.cancelled);
+        assert!(result.message.contains("cancelled"));
+    }
 }

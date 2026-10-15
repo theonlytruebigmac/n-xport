@@ -8,8 +8,8 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub struct UserRoleExtra {
     /// Whether the role is read-only (system role)
-    #[serde(default)]
-    pub readonly: Option<String>,
+    #[serde(default, deserialize_with = "crate::models::common::option_bool_or_string")]
+    pub readonly: Option<bool>,
     /// Permission names assigned to this role
     #[serde(default)]
     pub permissions: Vec<String>,
@@ -17,8 +17,10 @@ pub struct UserRoleExtra {
     #[serde(default)]
     pub usernames: Vec<String>,
     /// Whether the role can be cloned
-    #[serde(default)]
-    pub cloneable: Option<String>,
+    #[serde(default, deserialize_with = "crate::models::common::option_bool_or_string")]
+    pub cloneable: Option<bool>,
+    #[serde(flatten)]
+    pub other: HashMap<String, serde_json::Value>,
 }
 
 /// User Role from /api/org-units/{id}/user-roles
@@ -32,6 +34,10 @@ pub struct UserRole {
     pub role_name: Option<String>,
     #[serde(default)]
     pub role_description: Option<String>,
+    #[serde(default)]
+    pub org_unit_id: Option<i64>,
+    #[serde(default)]
+    pub user_ids: Option<Vec<i64>>,
     /// Extra fields containing permissions, usernames, etc.
     #[serde(default, rename = "_extra")]
     pub extra: Option<UserRoleExtra>,
@@ -64,16 +70,64 @@ pub struct UserRoleCsvRow {
     pub role_id: i64,
     pub role_name: Option<String>,
     pub role_description: Option<String>,
-    pub readonly: Option<String>,
-    pub cloneable: Option<String>,
+    pub org_unit_id: Option<i64>,
+    pub readonly: Option<bool>,
+    pub cloneable: Option<bool>,
     pub permissions: String,
     pub usernames: String,
+    pub user_ids: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UserRole, UserRoleCsvRow};
+
+    #[test]
+    fn parses_openapi_role_details_and_boolean_extra_fields() {
+        let role: UserRole = serde_json::from_value(serde_json::json!({
+            "roleId": 1001,
+            "orgUnitId": 1,
+            "roleName": "Default Dashboard Role",
+            "roleDescription": "Read-only dashboard access",
+            "orgUnitId": 1,
+            "userIds": [12, 13],
+            "_extra": {
+                "cloneable": true,
+                "readonly": true,
+                "permissions": ["DASHBOARDS_VIEW", "SERVICE_VIEW"],
+                "source": "system"
+            }
+        }))
+        .expect("OpenAPI role details should deserialize");
+
+        let extra = role.extra.as_ref().expect("role extra should be retained");
+        assert_eq!(extra.cloneable, Some(true));
+        assert_eq!(extra.readonly, Some(true));
+        assert_eq!(role.org_unit_id, Some(1));
+        assert_eq!(extra.other["source"], "system");
+        assert_eq!(role.user_ids, Some(vec![12, 13]));
+        assert_eq!(role.get_permissions(), vec!["DASHBOARDS_VIEW", "SERVICE_VIEW"]);
+        let json = serde_json::to_value(&role).expect("role should serialize");
+        assert_eq!(json["_extra"]["source"], "system");
+        let row = UserRoleCsvRow::from(&role);
+        assert_eq!(row.readonly, Some(true));
+        assert_eq!(row.user_ids, "12;13");
+        assert_eq!(row.org_unit_id, Some(1));
+    }
 }
 
 impl From<&UserRole> for UserRoleCsvRow {
     fn from(ur: &UserRole) -> Self {
         let permissions = ur.get_permissions().join(";");
         let usernames = ur.get_usernames().join(";");
+        let user_ids = ur
+            .user_ids
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(";");
         let (readonly, cloneable) = match &ur.extra {
             Some(e) => (e.readonly.clone(), e.cloneable.clone()),
             None => (None, None),
@@ -82,10 +136,12 @@ impl From<&UserRole> for UserRoleCsvRow {
             role_id: ur.role_id,
             role_name: ur.role_name.clone(),
             role_description: ur.role_description.clone(),
+            org_unit_id: ur.org_unit_id,
             readonly,
             cloneable,
             permissions,
             usernames,
+            user_ids,
         }
     }
 }

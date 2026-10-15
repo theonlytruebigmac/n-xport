@@ -54,4 +54,36 @@ pub struct ServiceOrg {
     pub is_system: Option<bool>,
     #[serde(default)]
     pub is_service_org: Option<bool>,
+    #[serde(default)]
+    pub generation: Option<i32>,
+    #[serde(default)]
+    pub descendant_count: Option<i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ServiceOrg;
+
+    #[test]
+    fn parses_openapi_service_organization_example() {
+        let organization: ServiceOrg = serde_json::from_value(serde_json::json!({
+            "soId": "100",
+            "soName": "N-able",
+            "orgUnitType": "SO",
+            "parentId": "50",
+            "externalId": "extId",
+            "externalId2": "extId2",
+            "contactPhoneExt": null,
+            "contactDepartment": "Support",
+            "street1": "One Street",
+            "county": null,
+            "postalCode": "A1A 1A1"
+        }))
+        .expect("OpenAPI service organization example should deserialize");
+
+        assert_eq!(organization.so_id, 100);
+        assert_eq!(organization.parent_id, Some(50));
+        assert_eq!(organization.external_id2.as_deref(), Some("extId2"));
+        assert_eq!(organization.contact_phone_ext, None);
+    }
 }

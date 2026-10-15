@@ -52,6 +52,10 @@ pub struct Customer {
     pub is_system: Option<bool>,
     #[serde(default)]
     pub is_service_org: Option<bool>,
+    #[serde(default)]
+    pub generation: Option<i32>,
+    #[serde(default)]
+    pub descendant_count: Option<i32>,
     /// Extra fields from API response. Skipped on serialize because the csv
     /// crate can't emit maps and nothing in this project reads these keys.
     #[serde(default, rename = "_extra", skip_serializing)]
@@ -107,20 +111,66 @@ pub struct Site {
     pub is_system: Option<bool>,
     #[serde(default)]
     pub is_service_org: Option<bool>,
+    #[serde(default)]
+    pub generation: Option<i32>,
+    #[serde(default)]
+    pub descendant_count: Option<i32>,
     
     // Potentially alternate names for parent linkage
-    #[serde(default, deserialize_with = "option_string_or_i64")]
+    #[serde(default, alias = "customer_id", deserialize_with = "option_string_or_i64")]
     pub customer_id: Option<i64>,
     #[serde(default, deserialize_with = "option_string_or_i64")]
     pub customerid: Option<i64>,
-    #[serde(default, deserialize_with = "option_string_or_i64")]
+    #[serde(default, alias = "org_unit_id", deserialize_with = "option_string_or_i64")]
     pub org_unit_id: Option<i64>,
-    #[serde(default, deserialize_with = "option_string_or_i64")]
+    #[serde(default, alias = "service_org_id", deserialize_with = "option_string_or_i64")]
     pub service_org_id: Option<i64>,
-    #[serde(default, deserialize_with = "option_string_or_i64")]
+    #[serde(default, alias = "service_orgid", deserialize_with = "option_string_or_i64")]
     pub service_orgid: Option<i64>,
     /// Extra fields from API response. Skipped on serialize because the csv
     /// crate can't emit maps and nothing in this project reads these keys.
     #[serde(default, rename = "_extra", skip_serializing)]
     pub extra: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Customer, Site};
+
+    #[test]
+    fn parses_openapi_customer_and_site_examples() {
+        let customer: Customer = serde_json::from_value(serde_json::json!({
+            "customerId": "100",
+            "customerName": "N-able",
+            "orgUnitType": "SO",
+            "parentId": "50",
+            "externalId": "extId",
+            "externalId2": "extId2",
+            "contactPhoneExt": null,
+            "contactDepartment": "Support",
+            "county": null,
+            "postalCode": "A1A 1A1"
+        }))
+        .expect("OpenAPI customer example should deserialize");
+        let site: Site = serde_json::from_value(serde_json::json!({
+            "siteId": "100",
+            "siteName": "N-able",
+            "orgUnitType": "SO",
+            "parentId": "50",
+            "externalId": "extId",
+            "externalId2": "extId2",
+            "contactPhoneExt": null,
+            "contactDepartment": "Support",
+            "county": null,
+            "postalCode": "A1A 1A1"
+        }))
+        .expect("OpenAPI site example should deserialize");
+
+        assert_eq!(customer.customer_id, 100);
+        assert_eq!(customer.parent_id, Some(50));
+        assert_eq!(customer.external_id2.as_deref(), Some("extId2"));
+        assert_eq!(site.site_id, 100);
+        assert_eq!(site.parent_id, Some(50));
+        assert_eq!(site.external_id2.as_deref(), Some("extId2"));
+    }
 }

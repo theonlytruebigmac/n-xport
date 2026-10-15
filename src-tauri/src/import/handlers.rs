@@ -8,6 +8,7 @@
 //! available (e.g. user creation is SOAP-only on N-central).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
@@ -42,12 +43,22 @@ pub struct ImportContext {
 
 impl ImportContext {
     /// Build the lookup tables for the target service org.
-    pub async fn load(client: &NcClient, source_so_id: i64) -> Result<Self, String> {
+    pub async fn load(
+        client: &NcClient,
+        source_so_id: i64,
+        cancel_token: &AtomicBool,
+    ) -> Result<Self, String> {
+        if cancel_token.load(Ordering::Relaxed) {
+            return Err("Import cancelled".into());
+        }
         let mut customers_by_name = HashMap::new();
         let customers = client
             .get_customers_by_so(source_so_id)
             .await
             .map_err(|e| format!("Failed to fetch customers: {}", e))?;
+        if cancel_token.load(Ordering::Relaxed) {
+            return Err("Import cancelled".into());
+        }
         for c in &customers {
             customers_by_name.insert(c.customer_name.to_lowercase(), c.customer_id);
         }
@@ -74,6 +85,9 @@ impl ImportContext {
                 }
             }
         }
+        if cancel_token.load(Ordering::Relaxed) {
+            return Err("Import cancelled".into());
+        }
 
         // Roles & groups: walk SO + every customer to populate name -> id maps.
         // First-seen wins because inherited roles appear at every child OU.
@@ -82,6 +96,9 @@ impl ImportContext {
         let mut all_ous: Vec<i64> = vec![source_so_id];
         all_ous.extend(customers.iter().map(|c| c.customer_id));
         for ou_id in &all_ous {
+            if cancel_token.load(Ordering::Relaxed) {
+                return Err("Import cancelled".into());
+            }
             if let Ok(roles) = client.get_user_roles(*ou_id).await {
                 for r in roles {
                     if let Some(name) = r.role_name {
@@ -90,6 +107,9 @@ impl ImportContext {
                             .or_insert(r.role_id);
                     }
                 }
+            }
+            if cancel_token.load(Ordering::Relaxed) {
+                return Err("Import cancelled".into());
             }
             if let Ok(groups) = client.get_access_groups(*ou_id).await {
                 for g in groups {
@@ -108,11 +128,15 @@ impl ImportContext {
 
         // Best-effort fetch of the connected SO's name so users can put the SO
         // name in the user-import `customerName` column.
-        let source_so_name = client
-            .get_service_org_by_id(source_so_id)
-            .await
-            .ok()
-            .map(|so| so.so_name.to_lowercase());
+        let source_so_name = if cancel_token.load(Ordering::Relaxed) {
+            None
+        } else {
+            client
+                .get_service_org_by_id(source_so_id)
+                .await
+                .ok()
+                .map(|so| so.so_name.to_lowercase())
+        };
 
         Ok(Self {
             source_so_id,
@@ -124,6 +148,35 @@ impl ImportContext {
             groups_by_name,
             permission_lookup,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_import_group_type, ImportContext};
+    use crate::api::NcClient;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn lookup_loading_stops_before_requests_after_cancellation() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let client = NcClient::new("https://localhost");
+        let cancel_token = AtomicBool::new(true);
+
+        let result = runtime.block_on(ImportContext::load(&client, 1, &cancel_token));
+        assert!(matches!(result, Err(message) if message == "Import cancelled"));
+    }
+
+    #[test]
+    fn only_documented_org_unit_access_group_type_is_supported_for_import() {
+        assert!(validate_import_group_type("ORG_UNIT").is_ok());
+        assert!(validate_import_group_type("org_unit").is_ok());
+        assert!(validate_import_group_type("DEVICE")
+            .expect_err("device IDs cannot be mapped")
+            .contains("device ID mapping"));
+        assert!(validate_import_group_type("OTHER")
+            .expect_err("unknown group type must be rejected")
+            .contains("expected ORG_UNIT"));
     }
 }
 
@@ -154,6 +207,19 @@ fn extract_id(resp: &serde_json::Value, keys: &[&str]) -> i64 {
         }
     }
     0
+}
+
+fn validate_import_group_type(group_type: &str) -> Result<(), String> {
+    if group_type.eq_ignore_ascii_case("ORG_UNIT") {
+        Ok(())
+    } else if group_type.eq_ignore_ascii_case("DEVICE") {
+        Err("Device-based access-group import is unsupported because device ID mapping is not implemented".into())
+    } else {
+        Err(format!(
+            "Unsupported groupType '{}'; expected ORG_UNIT",
+            group_type
+        ))
+    }
 }
 
 // ==================== Customers ====================
@@ -198,12 +264,15 @@ pub async fn import_customer(
 
     let payload = json!({
         "customerName": name,
-        "parentId": ctx.source_so_id,
         "externalId": row.external_id,
         "contactFirstName": row.contact_first_name,
         "contactLastName": row.contact_last_name,
         "contactEmail": row.contact_email,
         "contactPhone": row.contact_phone,
+        "contactPhoneExt": row.contact_phone_ext,
+        "phone": row.phone,
+        "contactTitle": row.contact_title,
+        "contactDepartment": row.contact_department,
         "street1": row.street1,
         "street2": row.street2,
         "city": row.city,
@@ -350,6 +419,10 @@ pub async fn import_site(
         "contactLastName": row.contact_last_name,
         "contactEmail": row.contact_email,
         "contactPhone": row.contact_phone,
+        "contactPhoneExt": row.contact_phone_ext,
+        "phone": row.phone,
+        "contactTitle": row.contact_title,
+        "contactDepartment": row.contact_department,
         "street1": row.street1,
         "street2": row.street2,
         "city": row.city,
@@ -475,6 +548,14 @@ pub async fn import_access_group(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("ORG_UNIT");
+    if let Err(message) = validate_import_group_type(group_type) {
+        return RowOutcome {
+            row_number,
+            status: RowStatus::Error,
+            label: name.to_string(),
+            message,
+        };
+    }
     let description = row.group_description.as_deref().unwrap_or("");
     let auto_include = row
         .auto_include_new_org_units
@@ -510,11 +591,7 @@ pub async fn import_access_group(
         "autoIncludeNewOrgUnits": auto_include,
     });
 
-    let result = if group_type == "DEVICE" {
-        client.create_device_access_group(dest_ou, &payload).await
-    } else {
-        client.create_org_unit_access_group(dest_ou, &payload).await
-    };
+    let result = client.create_org_unit_access_group(dest_ou, &payload).await;
 
     match result {
         Ok(resp) => {
@@ -675,11 +752,13 @@ pub async fn import_user_role(
         };
     }
 
-    let empty_users: Vec<i64> = Vec::new();
+    let empty_users: Vec<String> = Vec::new();
+    let permission_id_strings: Vec<String> =
+        permission_ids.iter().map(ToString::to_string).collect();
     let payload = json!({
         "roleName": name,
         "description": description,
-        "permissionIds": permission_ids,
+        "permissionIds": permission_id_strings,
         "userIds": empty_users,
     });
 

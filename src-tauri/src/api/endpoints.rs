@@ -30,9 +30,6 @@ pub mod paths {
 
     // Users
     pub const USERS: &str = "/api/users";
-
-    // Custom Properties
-    pub const CUSTOM_PROPERTIES_VALUES: &str = "/api/custom-properties/values";
 }
 
 /// Build URL for a single service org by ID
@@ -58,11 +55,6 @@ pub fn service_org_sites(_so_id: i64) -> String {
 /// Build URL for org unit access groups (GET list)
 pub fn org_unit_access_groups(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/access-groups", org_unit_id)
-}
-
-/// Build URL for creating org unit type access groups
-pub fn org_unit_access_groups_create(org_unit_id: i64) -> String {
-    format!("/api/org-units/{}/org-unit-access-groups", org_unit_id)
 }
 
 /// Build URL for creating device type access groups
