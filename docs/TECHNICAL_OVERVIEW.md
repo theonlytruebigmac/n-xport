@@ -32,7 +32,7 @@ The tool is composed of two layers: a React frontend rendered inside a Tauri des
 ```mermaid
 graph TB
     subgraph "Desktop Application (Tauri 2.0)"
-        React["React 19 + TypeScript<br/>HomePanel / SetupPanel / ConfigurePanel / ProgressPanel"]
+        React["React 19 + TypeScript<br/>Home / Settings / Setup / Configure / Installer / Progress panels"]
         TauriIPC["Tauri IPC Bridge<br/>(invoke + event emitter)"]
         Rust["Rust Backend<br/>Commands / API Client / Export Engine / Migration Engine"]
     end
@@ -134,6 +134,7 @@ sequenceDiagram
 
 - **HTTPS only.** The FQDN is normalized to `https://`; an `http://` prefix is replaced, so the JWT is never sent in clear text.
 
+- **Server address**: whatever is typed or pasted (with or without `https://` or `http://`, a trailing slash or page path, surrounding spaces, any letter case) is reduced to `https://<host>` by `server_url` in `commands/connection.rs`; the app, the CLI and saved profiles all use it, so connections are always HTTPS.
 - **JWT authentication**: The user provides a pre-generated JWT API token from their N-Central instance. This token is exchanged for a short-lived access token and a refresh token via the `/api/auth/authenticate` endpoint.
 
 - **Connection validation**: After authentication, the tool fetches `/api/server-info` to verify the server is reachable and running a compatible N-Central version.
@@ -173,14 +174,16 @@ graph TD
     D -->|Yes| E["POST /api/auth/refresh<br/>with refresh token"]
     E --> F["Store new access + refresh tokens"]
     F --> C
-    D -->|No| G["Return TokenExpired error"]
-    G --> H["User must re-authenticate"]
+    D -->|No| G["Sign in again with the session JWT<br/>POST /api/auth/authenticate"]
+    G --> F
+    E -->|Refused| G
 ```
 
 **Key details:**
 
 - **30-second buffer**: Token refresh is triggered 30 seconds before the access token actually expires, preventing mid-request expiration.
 - **Thread safety**: `Arc<RwLock<Option<AuthState>>>` allows concurrent reads (for normal API calls) with exclusive writes (during token refresh). The read lock is released before any refresh request is made.
+- **Long runs**: the JWT the session was opened with is kept in memory only (zeroized when dropped, never logged or written) so that when the refresh token expires, or is refused, the manager signs in again instead of failing every remaining request. One task renews at a time (`refresh_lock`); concurrent requests reuse its result, which also stops two tasks from refreshing at once.
 - **401/403 handling**: A 401 or 403 response is reported as an authentication error; the client does not retry it. Refreshing happens before each request (via `get_token`), not in response to a failure, so a token that expires between that check and the request surfaces as an error the user can retry.
 
 ---
@@ -235,14 +238,14 @@ The `RateLimiter` (`src-tauri/src/api/rate_limiter.rs`) uses Tokio semaphores to
 
 | Error Type | Retry Behavior |
 |-----------|---------------|
-| **429 (Rate Limited)** | Wait per `Retry-After` header, up to 3 retries |
+| **429 (Rate Limited)** | Wait per `Retry-After` header (capped at 60 seconds), up to 3 retries |
 | **500, 502, 503, 504 (Server Error)** | Exponential backoff of 1s, 2s, then 4s (capped at 16s), up to 3 retries; other 5xx responses are not retried |
 | **401/403 (Auth)** | Reported as an authentication error; no retry (the token is refreshed proactively before each request) |
-| **Timeout** | 60-second per-request timeout, no automatic retry |
+| **Timeout, dropped connection** | 60-second per-request timeout. Reads (GET) that fail without an HTTP response are retried with the same 1s, 2s, 4s backoff, up to 3 times; writes are never retried, because repeating a create after a timeout could duplicate it |
 
 ### Mocked API Coverage
 
-The Rust library tests run the REST client against a local mock HTTP server. They cover JWT authentication, paginated results with alternate metadata shapes and empty/final partial pages, documented pagination query parameters, 429 retry exhaustion, authentication/not-found/invalid-response errors, and the custom-property PUT path and body. Run them with `cd src-tauri && cargo test --all-targets`. These tests complement, but do not replace, validation against a representative N-central server. See [Testing and CI](#testing-and-ci) for the full test and CI picture.
+The Rust library tests run the REST client against a local mock HTTP server. They cover JWT authentication, paginated results with alternate metadata shapes and empty/final partial pages, documented pagination query parameters, 429 retry exhaustion, retry of a dropped read but not of a write, token refresh and re-sign-in (including concurrent callers), authentication/not-found/invalid-response errors, and the custom-property PUT path and body. Run them with `cd src-tauri && cargo test --all-targets`. These tests complement, but do not replace, validation against a representative N-central server. See [Testing and CI](#testing-and-ci) for the full test and CI picture.
 
 ### Pagination
 
@@ -255,7 +258,15 @@ Page 2: GET /api/customers?pageNumber=2&pageSize=100
 Page N: GET /api/customers?pageNumber=N&pageSize=100
 ```
 
-The `PaginatedResponse<T>` wrapper extracts `PageInfo` (total pages, total items) from each response and continues fetching until all pages are collected.
+The `PaginatedResponse<T>` wrapper extracts `PageInfo` (total pages, total items) from each response. The client does not assume the server honours the page size it asked for: N-central can cap it (the OpenAPI spec mentions a configured maximum), and the spec documents only `totalItems` on list responses. So it never decides it is finished from the requested page size. It stops when:
+
+- a page comes back empty;
+- the items collected reach the reported `totalItems`;
+- the reported `totalPages` is reached;
+- with no totals at all, a page is shorter than the first one;
+- a page is identical to the previous one, meaning the endpoint ignores page numbers (for example `/api/devices/{id}/custom-properties`, which the spec does not paginate). This guard also prevents an endless loop.
+
+Tests run these cases against a mock server that really pages a dataset: a capped page size with each combination of totals, no totals, an exact multiple of the page size, empty and single-item results, and an endpoint that ignores paging.
 
 ---
 
@@ -425,7 +436,7 @@ The `AppState` contains an `AtomicBool` cancellation token shared by export, imp
 
 ## Import Execution Flow
 
-CSV import writes to the **source-connected** server (the one connected in the first slot). It lives in `src-tauri/src/import/` (row models, templates, per-resource handlers) and `src-tauri/src/commands/import.rs` (`start_import`, `generate_template`, `get_import_types`).
+CSV files are read with any leading UTF-8 byte order mark removed (Excel's "CSV UTF-8" adds one, which would otherwise be glued to the first header name). CSV import writes to the **source-connected** server (the one connected in the first slot). It lives in `src-tauri/src/import/` (row models, templates, per-resource handlers) and `src-tauri/src/commands/import.rs` (`start_import`, `generate_template`, `get_import_types`).
 
 ```mermaid
 graph TD
@@ -588,8 +599,17 @@ SOAP is attempted only where it is required (user creation), preferred (customer
 | Org Properties | `org_properties.csv/json` | Custom property key-value pairs |
 | Device Properties | `device_properties.csv/json` | Per-device custom properties |
 | Device Assets | `device_assets.csv/json` | Hardware details (CPU, RAM, disk, etc.) |
+| Registration Tokens | `registration_tokens.csv/json` | Agent registration token and expiry for every customer and site (one row each, with its customer; off by default; export only) |
+
+Note on registration tokens: they come from `GET /api/org-units/{id}/registration-token`, one request per customer and site (service organizations have none). A token that cannot be read becomes a warning and the rest are still written. The file contains live secrets that let agents register, so treat it as sensitive; on macOS and Linux it is written readable only by the current user. The option is not offered for migration, since each server issues its own tokens.
 
 Note on access groups and user roles: they are exported once for each org unit that lists them. N-central lists a role or group at every org unit beneath the one that defines it, so inherited items repeat (a service org with 30 customers lists each inherited role about 31 times), and their member lists can differ by org unit, so the repeats are not pure duplicates. The users export is de-duplicated by user ID.
+
+### Installer scripts
+
+`commands/installers.rs` turns registration tokens into Windows agent installer scripts, one per customer or site, as the peer sample script does for customers. For each selected target it calls `GET /api/org-units/{id}/registration-token` (five at a time, sharing `fetch_tokens` with the registration token export), fills `data/install_agent.ps1.template`, and writes the result to a new `N-central Installer Scripts - <host> - <time>` folder. Customers and sites use the same installer arguments: the org unit's ID as `CUSTOMERID` with its own token.
+
+Safety rules, all tested: the server must be HTTPS on port 443 with a plain host name (the installer arguments assume 443); the token must be GUID-like characters only; names are escaped for a PowerShell single-quoted string, including the curly single quotes PowerShell also treats as quotes, and line breaks become spaces; file names avoid reserved characters and device names and include the org unit ID so equal names never collide; files are created readable only by the current user on macOS and Linux. A test parses every generated script with `pwsh` (skipped when it is not installed) using hostile names. Tokens are never put in warnings or the activity log. A target with no token, an unreadable token, or a write failure is a warning and the rest are still written; an expired token is a warning but its script is still written.
 
 ---
 
@@ -690,6 +710,8 @@ The full set of commands exposed by the Rust backend:
 | **Import** | `start_import(resource_type, csv_path, service_org_id, dry_run, password_policy?)` | Run or dry-run a CSV import |
 | | `generate_template(resource_type, path)` | Write a CSV template |
 | | `get_import_types()` | List resource types and whether each is supported |
+| **Installer scripts** | `list_installer_targets(service_org_id)` | List the customers and sites that can get a script |
+| | `generate_installer_scripts(output_dir, targets)` | Fetch each target's registration token and write one Windows installer script per target into a new folder |
 | **Migration** | `start_migration(options, source_so_id, dest_so_id)` | Begin migration |
 | | `migration_preflight(options, source_so_id, dest_so_id)` | Describe a migration (steps, SOAP use, known follow-up) without contacting either server |
 
@@ -767,7 +789,7 @@ graph TD
 | Windows | Credential Manager |
 | Linux | Secret Service (GNOME Keyring, KWallet) |
 
-**2. Encrypted file (opt-in)**: off by default. When the keychain is unavailable and nothing else is chosen, **nothing is written to disk**: the credential is kept for the current session only and the user is warned (`StorageBackend::SessionOnly`). A user can opt in to an encrypted file (`allowDiskCredentials` in `settings.json`; the Credential storage card in Setup, or `nc-export profile enable-encrypted-storage`). The file, `credentials.vault.json` in the user data directory (`src-tauri/src/credentials/vault.rs`), is protected by a passphrase the user chooses (at least 12 characters, no recovery):
+**2. Encrypted file (opt-in)**: off by default. When the keychain is unavailable and nothing else is chosen, **nothing is written to disk**: the credential is kept for the current session only and the user is warned (`StorageBackend::SessionOnly`). A user can opt in to an encrypted file (`allowDiskCredentials` in `settings.json`; the Credential storage card on the Settings page, or `nc-export profile enable-encrypted-storage`). The file, `credentials.vault.json` in the user data directory (`src-tauri/src/credentials/vault.rs`), is protected by a passphrase the user chooses (at least 12 characters, no recovery):
 
 - The key is derived with **Argon2id** (19 MiB, 2 iterations, 1 lane, 16-byte random salt per file); the cost settings are stored in the file, so it still opens if the defaults change.
 - Each secret is sealed with **ChaCha20-Poly1305** under a fresh random 96-bit nonce, with the account name as associated data, so an entry cannot be moved to another account and any tampering fails authentication.
@@ -776,7 +798,7 @@ graph TD
 - The passphrase lives in memory only (zeroed on drop) for the session: after a restart the file is *locked* until it is entered again. Existence checks (`has_credentials`) and deletes work while locked; reads do not.
 - Turning the option off keeps the file but makes it unreadable; deleting it is also how a forgotten passphrase is reset.
 
-**3. Legacy file (read-only)**: earlier versions wrote `credentials.json`, XOR-obfuscated with a constant key, which protects nothing against anyone who can read the file. It is never written now. On startup its entries move into the keychain when it works; otherwise they stay readable (so nothing is lost) and the Setup screen warns until encrypted file storage is turned on, which re-encrypts them into the vault. The file is deleted once empty.
+**3. Legacy file (read-only)**: earlier versions wrote `credentials.json`, XOR-obfuscated with a constant key, which protects nothing against anyone who can read the file. It is never written now. On startup its entries move into the keychain when it works; otherwise they stay readable (so nothing is lost) and the Settings page warns until encrypted file storage is turned on, which re-encrypts them into the vault. The file is deleted once empty.
 
 **Reads** try the keychain, then the encrypted file (if on and unlocked), then the legacy file. **Deletes** remove every copy and fail if any could not be removed, rather than reporting success while a secret remains. Deleting a profile removes four accounts: `{profile}`, `{profile}_password`, `{profile}_dest`, and `{profile}_dest_password`.
 
@@ -846,7 +868,7 @@ The export pipeline is designed to produce partial results rather than fail comp
 ### Token Expiration
 
 - Access tokens are short-lived and automatically refreshed 30 seconds before expiry
-- Refresh token expiration is tracked — if the refresh token expires, the user must re-authenticate
+- Refresh token expiration is tracked — when it expires the session signs in again with the in-memory JWT; only if that is missing does the user have to reconnect
 - The `AuthManager` prevents stale tokens from being used in API requests
 
 ### Rate Limiting
@@ -879,7 +901,7 @@ The export pipeline is designed to produce partial results rather than fail comp
 **Rust tests** (`cd src-tauri && cargo test --all-targets`) need no live server:
 
 - **Fake N-central server** (`src-tauri/src/test_support.rs`): a stateful local HTTP server (REST and SOAP) that records requests and answers from per-test state. Import handlers and migration steps are generic over the Tauri `Runtime`, so tests pass a mock app handle (`tauri` is a dev-dependency with the `test` feature).
-- **API client**: authentication, pagination shapes, 429 retry exhaustion, error mapping, and the custom-property PUT.
+- **API client**: authentication, token refresh and re-sign-in, pagination behaviour (page-size caps, missing totals, endpoints that ignore paging), 429 retry exhaustion, dropped-connection retry, error mapping, and the custom-property PUT.
 - **Import and migration**: repeated and duplicate rows, per-org-unit role/group scoping, mapping validation (role IDs, group scope, partial role loss), SOAP behavior (REST-only paths never call SOAP, fallback only after a REST failure, SOAP missing or disabled fails visibly), the preflight summary, and cancellation.
 - **Credentials and connections**: the three storage tiers against a fake keychain, the encrypted file (round trip, wrong passphrase, tampering, swapped entries, atomic writes, permissions), legacy migration, and connection state clearing (including failed connects against an unreachable host).
 
@@ -929,7 +951,7 @@ All N-Central API communication happens in Rust rather than in the frontend. Thi
 
 - **Connection pooling**: Reqwest maintains persistent connections
 - **Concurrent rate limiting**: Tokio semaphores enable precise concurrency control
-- **Token management**: Thread-safe token refresh without frontend involvement
+- **Token management**: Thread-safe token refresh and re-sign-in without frontend involvement
 - **File I/O**: Direct filesystem access without browser sandbox limitations
 
 ### REST-First with SOAP Where Required
@@ -977,9 +999,13 @@ The application uses Tauri's built-in updater plugin with GitHub Releases as the
 
 ```
 App.tsx (state management, event listeners, workflow orchestration)
-├── HomePanel.tsx                 — Welcome screen, mode selection (export / import / migrate)
-├── SetupPanel.tsx                — Server connection form, credential entry, profile selection
+├── HomePanel.tsx                 — Welcome screen, mode selection (export / import / migrate), Generate Installer Scripts, Settings entry
+├── SettingsPanel.tsx             — Settings page
 │   └── CredentialStorageCard.tsx — Where credentials are kept; opt in to, unlock, lock, or delete the encrypted file
+├── PageHead.tsx                  — Title, hint and step indicator at the top of each workflow page
+├── SetupPanel.tsx                — Server connection form, credential entry, profile selection (and CSV templates in import mode)
+│   └── ImportTemplatesMenu.tsx   — CSV template download menu (also used by ImportPanel)
+├── InstallerPanel.tsx            — Customers and sites (sites nested under their customer) to generate installer scripts for
 ├── ConfigurePanel.tsx            — Export/migration type selection, formats, output directory
 │   └── MigrationPreflightPanel.tsx — Preflight summary (steps, SOAP use, known follow-up) in migrate mode
 ├── ImportPanel.tsx               — Resource, CSV template/file, dry-run toggle (shows SoapApiNotice and PropertyPrerequisitesNotice where they apply)
@@ -1006,7 +1032,7 @@ App.tsx (state management, event listeners, workflow orchestration)
          └────────────────────────────────┘
 ```
 
-Import and migration follow the same path: SETUP → CONFIGURE → the running step (shown as Dry-running, Importing, or Migrating) → COMPLETE. Setup is also where the Credential storage card lives.
+Import and migration follow the same path: SETUP → CONFIGURE → the running step (shown as Dry-running, Importing, or Migrating) → COMPLETE. The Credential storage card lives on the Settings page, opened from the gear icon on the home screen. A run cannot be left or the connection dropped until it finishes or is cancelled.
 
 ### Type Definitions
 
@@ -1066,6 +1092,8 @@ export async function startExport(
 | `src-tauri/src/commands/migration/` | Multi-step migration, one module per step: `run.rs` (orchestration and the Tauri command), `customers.rs`, `roles.rs`, `users.rs`, `access_groups.rs`, `properties.rs`, plus `types.rs` (`IdMapping`, options and result), `env.rs` (`MigrationEnv`, progress and logging helpers), `summary.rs` (`MigrationSummary`), and `mapping.rs` (pure ID-resolution helpers); tests in `tests/` |
 | `src-tauri/src/commands/migration_preflight.rs` | Pure preflight summary for a migration selection |
 | `src-tauri/src/commands/import.rs` | `start_import`, templates, import types |
+| `src-tauri/src/commands/installers.rs` | Windows installer script generation: target listing, template filling and escaping, safe file names, script writing; tests in `installers/tests.rs`, including a PowerShell parse of every generated script |
+| `src-tauri/data/install_agent.ps1.template` | The installer script template (adapted from Morgan Rourke's sample; placeholders for server, ID, name and token) |
 | `src-tauri/src/import/handlers/` | Per-resource import handlers (`customers.rs`, `sites.rs`, `access_groups.rs`, `roles.rs`, `users.rs`, `properties.rs`) and the `ImportContext` lookups (`context.rs`); tests in `tests/` |
 | `src-tauri/src/import/mod.rs` | CSV row models, templates, outcome types |
 | `src-tauri/src/test_support.rs` | Stateful fake N-central server for tests |
@@ -1076,7 +1104,11 @@ export async function startExport(
 | `src-tauri/src/credentials/keyring.rs` | Keychain-first credential store: opt-in encrypted file, session-only otherwise, legacy-file migration |
 | `src-tauri/src/credentials/vault.rs` | Passphrase-encrypted credential file (Argon2id + ChaCha20-Poly1305) |
 | `src-tauri/src/commands/credential_storage.rs` | Commands for the encrypted-file opt-in, unlock, lock, and status |
-| `src/components/CredentialStorageCard.tsx` | Credential storage settings card on the Setup screen |
+| `src/components/CredentialStorageCard.tsx` | Credential storage card, shown on the Settings page |
+| `src/components/SettingsPanel.tsx` | Settings page (credential storage) |
+| `src/components/PageHead.tsx` | Page title, hint, and the Setup / Configure / Run step indicator |
+| `src/components/InstallerPanel.tsx` | Customer and site picker for installer scripts, with sites nested under their customer |
+| `src/components/ImportTemplatesMenu.tsx` | CSV template download menu, on the Setup and Configure pages for import |
 | `src-tauri/src/error.rs` | `AppError` & `ApiError` type definitions |
 | `src/App.tsx` | React main component — state management & workflow orchestration |
 | `src/api.ts` | Type-safe Tauri command wrappers |
