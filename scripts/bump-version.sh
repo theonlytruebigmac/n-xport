@@ -2,6 +2,8 @@
 set -euo pipefail
 
 # Usage: ./scripts/bump-version.sh [major|minor|patch] or ./scripts/bump-version.sh <version>
+#        ./scripts/bump-version.sh <bump> --no-tag   (commit the bump but do not tag it; for a
+#                                                     protected main, where the tag goes on the merge commit)
 #        ./scripts/bump-version.sh --check   (exit non-zero unless all version files agree)
 # Examples:
 #   ./scripts/bump-version.sh patch   -> 0.1.14 => 0.1.15
@@ -54,6 +56,8 @@ if [[ "$CURRENT" != "$CARGO_VERSION" || "$CURRENT" != "$TAURI_VERSION" ]]; then
 fi
 
 BUMP="${1:-patch}"
+NO_TAG=0
+if [[ "${2:-}" == "--no-tag" ]]; then NO_TAG=1; fi
 
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
@@ -89,6 +93,22 @@ sed -i.bak "/^\[package\]/,/^\[/ s/^version = \"$CARGO_VERSION\"/version = \"$NE
 
 sed -i.bak "s/\"version\": \"$TAURI_VERSION\"/\"version\": \"$NEW\"/" "$TAURI_CONF" && rm -f "$TAURI_CONF.bak"
 
+# package-lock.json records the app's own version twice (top level and the root package)
+PACKAGE_LOCK="$ROOT_DIR/package-lock.json"
+LOCKFILE_UPDATED=0
+if [[ -f "$PACKAGE_LOCK" ]] && command -v node >/dev/null 2>&1; then
+  if node -e '
+    const fs = require("fs");
+    const [file, version] = process.argv.slice(1);
+    const lock = JSON.parse(fs.readFileSync(file, "utf8"));
+    lock.version = version;
+    if (lock.packages && lock.packages[""]) lock.packages[""].version = version;
+    fs.writeFileSync(file, JSON.stringify(lock, null, 2) + "\n");
+  ' "$PACKAGE_LOCK" "$NEW"; then
+    LOCKFILE_UPDATED=1
+  fi
+fi
+
 # Cargo.lock records the crate's own version, so refresh it now instead of leaving a stray
 # lockfile change for the next build (offline: only the workspace crate's entry changes)
 LOCK_UPDATED=0
@@ -113,14 +133,21 @@ echo "  - package.json"
 echo "  - src-tauri/Cargo.toml"
 echo "  - src-tauri/tauri.conf.json"
 if [[ "$LOCK_UPDATED" == "1" ]]; then echo "  - src-tauri/Cargo.lock"; fi
+if [[ "$LOCKFILE_UPDATED" == "1" ]]; then echo "  - package-lock.json"; fi
 
-# Prompt for git tag
-read -rp "Create git commit and tag v$NEW? [y/N] " REPLY
+# Prompt for git commit (and tag)
+if [[ "$NO_TAG" == "1" ]]; then PROMPT="Create git commit v$NEW (no tag)? [y/N] "; else PROMPT="Create git commit and tag v$NEW? [y/N] "; fi
+read -rp "$PROMPT" REPLY
 if [[ "$REPLY" =~ ^[Yy]$ ]]; then
   git add "$PACKAGE_JSON" "$CARGO_TOML" "$TAURI_CONF"
   if [[ "$LOCK_UPDATED" == "1" ]]; then git add "$ROOT_DIR/src-tauri/Cargo.lock"; fi
+  if [[ "$LOCKFILE_UPDATED" == "1" ]]; then git add "$PACKAGE_LOCK"; fi
   git commit -m "Bump version to $NEW"
-  git tag "v$NEW"
-  echo "Created commit and tag v$NEW"
-  echo "Run 'git push && git push --tags' to trigger a release."
+  if [[ "$NO_TAG" == "1" ]]; then
+    echo "Created the version commit. After it is merged, tag the merge commit: git tag v$NEW <commit> && git push origin v$NEW"
+  else
+    git tag "v$NEW"
+    echo "Created commit and tag v$NEW"
+    echo "Run 'git push && git push --tags' to trigger a release."
+  fi
 fi

@@ -36,35 +36,39 @@ pass:
 
 ### Steps
 
-1. Make sure your working tree is clean and on `main` with the latest changes:
+`main` is protected: changes reach it only through a pull request with one
+approving review (merge commits only), and nobody can push to it directly. So the
+version bump is committed on `dev`, goes through the pull request with everything
+else, and the release tag goes on the **merge commit** on `main`.
+
+1. On `dev`, with a clean working tree and everything for the release committed,
+   bump the version. Pick one of:
 
    ```bash
-   git checkout main
-   git pull --ff-only
-   git status   # should be clean
+   ./scripts/bump-version.sh patch --no-tag    # 1.2.0 -> 1.2.1
+   ./scripts/bump-version.sh minor --no-tag    # 1.2.0 -> 1.3.0
+   ./scripts/bump-version.sh major --no-tag    # 1.2.0 -> 2.0.0
+   ./scripts/bump-version.sh 1.2.3 --no-tag    # explicit version
    ```
 
-2. Bump the version. Pick one of:
+   The script updates `package.json`, `Cargo.toml`, `tauri.conf.json`,
+   `Cargo.lock` and `package-lock.json`, checks that each version file took the
+   new version (it stops with an error if not), and asks whether to commit.
+   Answer **`y`** to create the `Bump version to X.Y.Z` commit. `--no-tag` leaves
+   tagging for after the merge.
+2. Push `dev` and open a pull request from `dev` to `main`. CI runs on the pull
+   request; get the review approved and merge it with a merge commit.
+3. Tag the merge commit and push the tag, which starts the release:
 
    ```bash
-   ./scripts/bump-version.sh patch    # 1.2.0 -> 1.2.1
-   ./scripts/bump-version.sh minor    # 1.2.0 -> 1.3.0
-   ./scripts/bump-version.sh major    # 1.2.0 -> 2.0.0
-   ./scripts/bump-version.sh 1.2.3    # explicit version
+   git fetch origin
+   git tag vX.Y.Z origin/main
+   git push origin vX.Y.Z
    ```
 
-   The script updates all three version files, refreshes `Cargo.lock` so it carries
-   the new crate version, checks that each file took the new version (it stops with
-   an error if not), and prompts:
-   `Create git commit and tag vX.Y.Z? [y/N]`. Answer **`y`** — it will
-   create a commit (`Bump version to X.Y.Z`) and a tag (`vX.Y.Z`).
-3. Push the commit **and** the tag in the same step so the workflow kicks off:
-
-   ```bash
-   git push && git push --tags
-   ```
-
-   (or `git push origin main --follow-tags`)
+   (Without a protected `main` you could run the script without `--no-tag` on
+   `main` and push with `git push --follow-tags`; here the tag must point at the
+   commit that is on `main`.)
 4. Watch the build at
    [Actions → Release](https://github.com/theonlytruebigmac/n-xport/actions/workflows/release.yml).
    The workflow builds macOS (Apple Silicon and Intel), Linux, and Windows
@@ -83,8 +87,8 @@ pass:
   Run `git push --tags` (or re-push a specific tag:
   `git push origin vX.Y.Z`).
 - **Verify or Checks failed.** Nothing was built or published. Fix the problem,
-  then move the tag: delete it locally and on the remote (below), commit the fix
-  and re-run the version bump or re-tag.
+  then move the tag: delete it locally and on the remote (below), fix the problem
+  through a pull request, and tag the new merge commit.
 - **One platform's build failed.** Nothing is published: the release stays a
   draft with the files uploaded so far. Fix the cause (if it is a flaky runner,
   just retry) and use "Re-run failed jobs" on the Actions page; the publish step
