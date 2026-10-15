@@ -1,7 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Helper to serialize a Vec as a semicolon-separated string for CSV
-pub fn serialize_vec_to_string<S, T>(v: &Vec<T>, s: S) -> Result<S::Ok, S::Error>
+pub fn serialize_vec_to_string<S, T>(v: &[T], s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
     T: std::fmt::Display,
@@ -237,15 +237,11 @@ pub struct ExportOptions {
 /// Export format
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ExportFormat {
+    #[default]
     Csv,
     Json,
-}
-
-impl Default for ExportFormat {
-    fn default() -> Self {
-        Self::Csv
-    }
 }
 
 /// Progress update for UI

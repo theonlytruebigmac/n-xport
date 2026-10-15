@@ -11,6 +11,8 @@ pub mod error;
 pub mod export;
 pub mod import;
 pub mod models;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use error::{AppError, Result};
 

@@ -1,7 +1,7 @@
 //! Service Organization models
 
+use crate::models::common::{option_string_or_i64, string_or_i64};
 use serde::{Deserialize, Serialize};
-use crate::models::common::{string_or_i64, option_string_or_i64};
 
 /// Service Organization from /api/service-orgs
 #[derive(Debug, Clone, Serialize, Deserialize)]

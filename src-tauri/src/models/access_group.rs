@@ -30,7 +30,10 @@ pub struct AccessGroupExtra {
 #[serde(rename_all = "camelCase")]
 pub struct AccessGroup {
     /// The actual field name from N-Central is "groupId"
-    #[serde(alias = "accessGroupId", deserialize_with = "crate::models::common::string_or_i64")]
+    #[serde(
+        alias = "accessGroupId",
+        deserialize_with = "crate::models::common::string_or_i64"
+    )]
     pub group_id: i64,
     #[serde(default)]
     pub org_unit_id: Option<i64>,
@@ -115,39 +118,6 @@ pub struct AccessGroupCsvRow {
     pub auto_include_new_org_units: Option<bool>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{AccessGroup, AccessGroupCsvRow};
-
-    #[test]
-    fn parses_openapi_access_group_details_without_dropping_membership_fields() {
-        let group: AccessGroup = serde_json::from_value(serde_json::json!({
-            "groupId": 1549311915,
-            "orgUnitId": 1,
-            "groupName": "Technicians",
-            "groupDescription": "Support staff",
-            "orgUnitIds": [1, 50, 102],
-            "deviceIds": [200, 201],
-            "userIds": [300],
-            "autoIncludeNewOrgUnits": false,
-            "_extra": {
-                "grouptype": "ORG_UNIT",
-                "readonly": "false"
-            }
-        }))
-        .expect("OpenAPI access group details should deserialize");
-
-        let row = AccessGroupCsvRow::from(&group);
-        assert_eq!(row.org_unit_ids, "1;50;102");
-        assert_eq!(row.device_ids, "200;201");
-        assert_eq!(row.user_ids, "300");
-        assert_eq!(row.group_type.as_deref(), Some("ORG_UNIT"));
-        assert_eq!(row.auto_include_new_org_units, Some(false));
-        assert_eq!(group.device_ids, Some(vec![200, 201]));
-        assert_eq!(group.user_ids, Some(vec![300]));
-    }
-}
-
 impl From<&AccessGroup> for AccessGroupCsvRow {
     fn from(ag: &AccessGroup) -> Self {
         let usernames = ag.get_usernames().join(";");
@@ -185,5 +155,38 @@ impl From<&AccessGroup> for AccessGroupCsvRow {
             user_ids,
             auto_include_new_org_units: ag.get_auto_include(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AccessGroup, AccessGroupCsvRow};
+
+    #[test]
+    fn parses_openapi_access_group_details_without_dropping_membership_fields() {
+        let group: AccessGroup = serde_json::from_value(serde_json::json!({
+            "groupId": 1549311915,
+            "orgUnitId": 1,
+            "groupName": "Technicians",
+            "groupDescription": "Support staff",
+            "orgUnitIds": [1, 50, 102],
+            "deviceIds": [200, 201],
+            "userIds": [300],
+            "autoIncludeNewOrgUnits": false,
+            "_extra": {
+                "grouptype": "ORG_UNIT",
+                "readonly": "false"
+            }
+        }))
+        .expect("OpenAPI access group details should deserialize");
+
+        let row = AccessGroupCsvRow::from(&group);
+        assert_eq!(row.org_unit_ids, "1;50;102");
+        assert_eq!(row.device_ids, "200;201");
+        assert_eq!(row.user_ids, "300");
+        assert_eq!(row.group_type.as_deref(), Some("ORG_UNIT"));
+        assert_eq!(row.auto_include_new_org_units, Some(false));
+        assert_eq!(group.device_ids, Some(vec![200, 201]));
+        assert_eq!(group.user_ids, Some(vec![300]));
     }
 }

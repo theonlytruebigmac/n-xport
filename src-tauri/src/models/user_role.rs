@@ -8,7 +8,10 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub struct UserRoleExtra {
     /// Whether the role is read-only (system role)
-    #[serde(default, deserialize_with = "crate::models::common::option_bool_or_string")]
+    #[serde(
+        default,
+        deserialize_with = "crate::models::common::option_bool_or_string"
+    )]
     pub readonly: Option<bool>,
     /// Permission names assigned to this role
     #[serde(default)]
@@ -17,7 +20,10 @@ pub struct UserRoleExtra {
     #[serde(default)]
     pub usernames: Vec<String>,
     /// Whether the role can be cloned
-    #[serde(default, deserialize_with = "crate::models::common::option_bool_or_string")]
+    #[serde(
+        default,
+        deserialize_with = "crate::models::common::option_bool_or_string"
+    )]
     pub cloneable: Option<bool>,
     #[serde(flatten)]
     pub other: HashMap<String, serde_json::Value>,
@@ -28,7 +34,10 @@ pub struct UserRoleExtra {
 #[serde(rename_all = "camelCase")]
 pub struct UserRole {
     /// The actual field name from N-Central is "roleId"
-    #[serde(alias = "userRoleId", deserialize_with = "crate::models::common::string_or_i64")]
+    #[serde(
+        alias = "userRoleId",
+        deserialize_with = "crate::models::common::string_or_i64"
+    )]
     pub role_id: i64,
     #[serde(default)]
     pub role_name: Option<String>,
@@ -79,42 +88,7 @@ pub struct UserRoleCsvRow {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{UserRole, UserRoleCsvRow};
-
-    #[test]
-    fn parses_openapi_role_details_and_boolean_extra_fields() {
-        let role: UserRole = serde_json::from_value(serde_json::json!({
-            "roleId": 1001,
-            "orgUnitId": 1,
-            "roleName": "Default Dashboard Role",
-            "roleDescription": "Read-only dashboard access",
-            "orgUnitId": 1,
-            "userIds": [12, 13],
-            "_extra": {
-                "cloneable": true,
-                "readonly": true,
-                "permissions": ["DASHBOARDS_VIEW", "SERVICE_VIEW"],
-                "source": "system"
-            }
-        }))
-        .expect("OpenAPI role details should deserialize");
-
-        let extra = role.extra.as_ref().expect("role extra should be retained");
-        assert_eq!(extra.cloneable, Some(true));
-        assert_eq!(extra.readonly, Some(true));
-        assert_eq!(role.org_unit_id, Some(1));
-        assert_eq!(extra.other["source"], "system");
-        assert_eq!(role.user_ids, Some(vec![12, 13]));
-        assert_eq!(role.get_permissions(), vec!["DASHBOARDS_VIEW", "SERVICE_VIEW"]);
-        let json = serde_json::to_value(&role).expect("role should serialize");
-        assert_eq!(json["_extra"]["source"], "system");
-        let row = UserRoleCsvRow::from(&role);
-        assert_eq!(row.readonly, Some(true));
-        assert_eq!(row.user_ids, "12;13");
-        assert_eq!(row.org_unit_id, Some(1));
-    }
-}
+mod tests;
 
 impl From<&UserRole> for UserRoleCsvRow {
     fn from(ur: &UserRole) -> Self {
@@ -129,7 +103,7 @@ impl From<&UserRole> for UserRoleCsvRow {
             .collect::<Vec<_>>()
             .join(";");
         let (readonly, cloneable) = match &ur.extra {
-            Some(e) => (e.readonly.clone(), e.cloneable.clone()),
+            Some(e) => (e.readonly, e.cloneable),
             None => (None, None),
         };
         Self {
@@ -147,7 +121,8 @@ impl From<&UserRole> for UserRoleCsvRow {
 }
 
 /// Mapping of permission name to permission ID
-/// Loaded from rolePermissionIds.csv
+/// Loaded from `data/rolePermissionIds.csv`
+#[derive(Default)]
 pub struct PermissionLookup {
     name_to_id: HashMap<String, i64>,
 }
@@ -158,6 +133,12 @@ impl PermissionLookup {
         Self {
             name_to_id: HashMap::new(),
         }
+    }
+
+    /// The permission list bundled into the app (`data/rolePermissionIds.csv`). This is the
+    /// only copy; roles created by import and migration resolve permission names against it.
+    pub fn bundled() -> Self {
+        Self::from_csv(include_str!("../../data/rolePermissionIds.csv"))
     }
 
     /// Load permission mappings from CSV content

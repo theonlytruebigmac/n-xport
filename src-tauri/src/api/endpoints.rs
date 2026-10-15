@@ -49,12 +49,17 @@ pub fn customer_sites(customer_id: i64) -> String {
 
 /// Build URL for service org sites (via org-units)
 pub fn service_org_sites(_so_id: i64) -> String {
-    format!("/api/sites")
+    "/api/sites".to_string()
 }
 
 /// Build URL for org unit access groups (GET list)
 pub fn org_unit_access_groups(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/access-groups", org_unit_id)
+}
+
+/// Build URL for one access group's full details
+pub fn access_group_by_id(group_id: i64) -> String {
+    format!("/api/access-groups/{}", group_id)
 }
 
 /// Build URL for creating device type access groups
@@ -74,7 +79,10 @@ pub fn org_unit_custom_properties(org_unit_id: i64) -> String {
 
 /// Build URL for a single org unit custom property value (PUT to update)
 pub fn org_unit_custom_property(org_unit_id: i64, property_id: i64) -> String {
-    format!("/api/org-units/{}/custom-properties/{}", org_unit_id, property_id)
+    format!(
+        "/api/org-units/{}/custom-properties/{}",
+        org_unit_id, property_id
+    )
 }
 
 /// Build URL for org unit users
@@ -95,6 +103,14 @@ pub fn device_by_id(device_id: i64) -> String {
 /// Build URL for device custom properties
 pub fn device_custom_properties(device_id: i64) -> String {
     format!("/api/devices/{}/custom-properties", device_id)
+}
+
+/// Build URL for a single device custom property value (PUT to update)
+pub fn device_custom_property(device_id: i64, property_id: i64) -> String {
+    format!(
+        "/api/devices/{}/custom-properties/{}",
+        device_id, property_id
+    )
 }
 
 /// Build URL for device assets

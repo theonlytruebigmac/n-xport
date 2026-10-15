@@ -1,7 +1,7 @@
 //! Customer and Site models
 
+use crate::models::common::{option_string_or_i64, string_or_i64};
 use serde::{Deserialize, Serialize};
-use crate::models::common::{string_or_i64, option_string_or_i64};
 
 /// Customer from /api/customers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,17 +115,33 @@ pub struct Site {
     pub generation: Option<i32>,
     #[serde(default)]
     pub descendant_count: Option<i32>,
-    
+
     // Potentially alternate names for parent linkage
-    #[serde(default, alias = "customer_id", deserialize_with = "option_string_or_i64")]
+    #[serde(
+        default,
+        alias = "customer_id",
+        deserialize_with = "option_string_or_i64"
+    )]
     pub customer_id: Option<i64>,
     #[serde(default, deserialize_with = "option_string_or_i64")]
     pub customerid: Option<i64>,
-    #[serde(default, alias = "org_unit_id", deserialize_with = "option_string_or_i64")]
+    #[serde(
+        default,
+        alias = "org_unit_id",
+        deserialize_with = "option_string_or_i64"
+    )]
     pub org_unit_id: Option<i64>,
-    #[serde(default, alias = "service_org_id", deserialize_with = "option_string_or_i64")]
+    #[serde(
+        default,
+        alias = "service_org_id",
+        deserialize_with = "option_string_or_i64"
+    )]
     pub service_org_id: Option<i64>,
-    #[serde(default, alias = "service_orgid", deserialize_with = "option_string_or_i64")]
+    #[serde(
+        default,
+        alias = "service_orgid",
+        deserialize_with = "option_string_or_i64"
+    )]
     pub service_orgid: Option<i64>,
     /// Extra fields from API response. Skipped on serialize because the csv
     /// crate can't emit maps and nothing in this project reads these keys.

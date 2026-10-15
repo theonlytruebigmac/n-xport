@@ -62,6 +62,15 @@ pub struct Device {
     pub device_status: Option<DeviceStatus>,
 }
 
+impl Device {
+    pub fn org_unit_scope_id(&self) -> Option<i64> {
+        self.org_unit_id
+            .or(self.site_id)
+            .or(self.customer_id)
+            .or(self.so_id)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceStatus {
@@ -175,8 +184,24 @@ mod tests {
             device.last_appliance_checkin_time_local.as_deref(),
             Some("2025-02-01T05:00:00-05:00")
         );
-        let status = device.device_status.expect("device status should be retained");
+        let status = device
+            .device_status
+            .expect("device status should be retained");
         assert_eq!(status.state, Some(1));
         assert_eq!(status.status, Some(2));
+    }
+
+    #[test]
+    fn resolves_device_org_scope_from_documented_hierarchy_fields() {
+        let device: Device = serde_json::from_value(serde_json::json!({
+            "deviceId": 42,
+            "orgUnitId": 3,
+            "customerId": 2,
+            "siteId": 1,
+            "soId": 4
+        }))
+        .expect("device hierarchy fields should deserialize");
+
+        assert_eq!(device.org_unit_scope_id(), Some(3));
     }
 }

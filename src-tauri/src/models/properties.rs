@@ -116,9 +116,7 @@ impl From<&DeviceProperty> for DevicePropertyCsvRow {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DeviceProperty, DevicePropertyCsvRow, OrgProperty, OrgPropertyCsvRow,
-    };
+    use super::{DeviceProperty, DevicePropertyCsvRow, OrgProperty, OrgPropertyCsvRow};
 
     #[test]
     fn accepts_openapi_property_name_for_org_and_device_properties() {

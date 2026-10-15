@@ -17,7 +17,7 @@ use crate::models::{
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceCsvRow {
+pub(crate) struct DeviceCsvRow {
     device_id: i64,
     uri: Option<String>,
     remote_control_uri: Option<String>,
@@ -200,12 +200,9 @@ impl From<&DeviceAsset> for DeviceAssetFlat {
             processor_max_clock_speed: proc
                 .and_then(|p| p.max_clock_speed)
                 .or_else(|| asset_i64(processor_data, "maxclockspeed")),
-            processor_cores: proc
-                .and_then(|p| p.number_of_cores)
-                .or_else(|| {
-                    asset_i64(processor_data, "numberofcores")
-                        .and_then(|n| n.try_into().ok())
-                }),
+            processor_cores: proc.and_then(|p| p.number_of_cores).or_else(|| {
+                asset_i64(processor_data, "numberofcores").and_then(|n| n.try_into().ok())
+            }),
             processor_logical_processors: proc
                 .and_then(|p| p.number_of_logical_processors)
                 .or_else(|| {
@@ -250,95 +247,76 @@ fn export_is_partial(cancelled: bool, warnings: &[String], errors: &[String]) ->
     !cancelled && (!warnings.is_empty() || !errors.is_empty())
 }
 
-/// Helper to write data in the requested formats (CSV/JSON), collecting files and errors.
-fn write_export_files<T: Serialize>(
-    data: &[T],
-    output_path: &Path,
-    name: &str,
-    export_csv: bool,
-    export_json: bool,
-    files_created: &mut Vec<String>,
-    total_records: &mut usize,
-    errors: &mut Vec<String>,
-) {
-    if data.is_empty() {
-        return;
-    }
-
-    let mut wrote_data = false;
-    if export_csv {
-        let path = output_path.join(format!("{}.csv", name));
-        match export_to_csv(data, &path) {
-            Ok(_) => {
-                files_created.push(path.display().to_string());
-                wrote_data = true;
-            }
-            Err(e) => {
-                errors.push(format!("Failed to write {}.csv: {}", name, e));
-            }
-        }
-    }
-    if export_json {
-        let path = output_path.join(format!("{}.json", name));
-        match export_to_json(data, &path) {
-            Ok(_) => {
-                files_created.push(path.display().to_string());
-                wrote_data = true;
-            }
-            Err(e) => {
-                errors.push(format!("Failed to write {}.json: {}", name, e));
-            }
-        }
-    }
-    if wrote_data {
-        *total_records += data.len();
-    }
+/// Where an export writes, which formats it writes, and what it has produced so far.
+struct ExportOutput<'a> {
+    dir: &'a Path,
+    csv: bool,
+    json: bool,
+    files_created: Vec<String>,
+    total_records: usize,
+    errors: Vec<String>,
 }
 
-/// Like `write_export_files` but uses a separate flattened shape for CSV
-/// while the richer shape is preserved for JSON.
-fn write_split_export_files<C: Serialize, J: Serialize>(
-    csv_data: &[C],
-    json_data: &[J],
-    output_path: &Path,
-    name: &str,
-    export_csv: bool,
-    export_json: bool,
-    files_created: &mut Vec<String>,
-    total_records: &mut usize,
-    errors: &mut Vec<String>,
-) {
-    if json_data.is_empty() {
-        return;
+impl<'a> ExportOutput<'a> {
+    fn new(dir: &'a Path, csv: bool, json: bool) -> Self {
+        Self {
+            dir,
+            csv,
+            json,
+            files_created: Vec::new(),
+            total_records: 0,
+            errors: Vec::new(),
+        }
     }
 
-    let mut wrote_data = false;
-    if export_csv {
-        let path = output_path.join(format!("{}.csv", name));
-        match export_to_csv(csv_data, &path) {
-            Ok(_) => {
-                files_created.push(path.display().to_string());
-                wrote_data = true;
-            }
-            Err(e) => {
-                errors.push(format!("Failed to write {}.csv: {}", name, e));
+    /// Write data in the requested formats (CSV/JSON), collecting files and errors.
+    fn write<T: Serialize>(&mut self, data: &[T], name: &str) {
+        self.write_split(data, data, name);
+    }
+
+    /// Like `write` but uses a separate flattened shape for CSV while the richer
+    /// shape is preserved for JSON. Each logical record is counted once, however
+    /// many formats it is written in.
+    fn write_split<C: Serialize, J: Serialize>(
+        &mut self,
+        csv_data: &[C],
+        json_data: &[J],
+        name: &str,
+    ) {
+        if json_data.is_empty() {
+            return;
+        }
+
+        let mut wrote_data = false;
+        if self.csv {
+            let path = self.dir.join(format!("{}.csv", name));
+            match export_to_csv(csv_data, &path) {
+                Ok(_) => {
+                    self.files_created.push(path.display().to_string());
+                    wrote_data = true;
+                }
+                Err(e) => {
+                    self.errors
+                        .push(format!("Failed to write {}.csv: {}", name, e));
+                }
             }
         }
-    }
-    if export_json {
-        let path = output_path.join(format!("{}.json", name));
-        match export_to_json(json_data, &path) {
-            Ok(_) => {
-                files_created.push(path.display().to_string());
-                wrote_data = true;
-            }
-            Err(e) => {
-                errors.push(format!("Failed to write {}.json: {}", name, e));
+        if self.json {
+            let path = self.dir.join(format!("{}.json", name));
+            match export_to_json(json_data, &path) {
+                Ok(_) => {
+                    self.files_created.push(path.display().to_string());
+                    wrote_data = true;
+                }
+                Err(e) => {
+                    self.errors
+                        .push(format!("Failed to write {}.json: {}", name, e));
+                }
             }
         }
-    }
-    if wrote_data {
-        *total_records += json_data.len();
+        if wrote_data {
+            self.total_records += json_data.len();
+        }
     }
 }
 
@@ -376,10 +354,8 @@ pub async fn start_export(
     let export_csv = formats.iter().any(|f| f == "csv");
     let export_json = formats.iter().any(|f| f == "json");
 
-    let mut files_created = Vec::new();
-    let mut total_records = 0;
+    let mut out = ExportOutput::new(&output_path, export_csv, export_json);
     let mut warnings = Vec::new();
-    let mut errors = Vec::new();
 
     // Reset cancellation token
     state.cancel_token.store(false, Ordering::Relaxed);
@@ -426,7 +402,7 @@ pub async fn start_export(
         Err(e) => {
             let msg = format!("Failed to fetch target Service Org: {}", e);
             tracing::error!("{}", msg);
-            errors.push(msg);
+            out.errors.push(msg);
         }
     }
 
@@ -444,7 +420,7 @@ pub async fn start_export(
             Err(e) => {
                 let msg = format!("Failed to fetch customers: {}", e);
                 tracing::error!("{}", msg);
-                errors.push(msg);
+                out.errors.push(msg);
             }
         }
     }
@@ -468,7 +444,7 @@ pub async fn start_export(
             Err(e) => {
                 let msg = format!("Failed to fetch sites: {}", e);
                 tracing::error!("{}", msg);
-                errors.push(msg);
+                out.errors.push(msg);
             }
         }
     }
@@ -482,50 +458,48 @@ pub async fn start_export(
 
     // Service Orgs
     if !cancel_token.load(Ordering::Relaxed) && options.service_orgs {
-        write_export_files(
-            &fetched_service_orgs, &output_path, "service_orgs",
-            export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-        );
+        out.write(&fetched_service_orgs, "service_orgs");
     }
 
     // Customers
     if !cancel_token.load(Ordering::Relaxed) && options.customers {
-        write_export_files(
-            &fetched_customers, &output_path, "customers",
-            export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-        );
+        out.write(&fetched_customers, "customers");
     }
 
     // Sites
     if !cancel_token.load(Ordering::Relaxed) && options.sites {
-        write_export_files(
-            &fetched_sites, &output_path, "sites",
-            export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-        );
+        out.write(&fetched_sites, "sites");
     }
 
     // Users (ITERATIVE FETCH)
     if !cancel_token.load(Ordering::Relaxed) && options.users {
         emit_progress("Users", "Iterating Org Units...", 20.0);
         let all_users = fetch_iterative(
-            client, &valid_ou_ids,
+            client,
+            &valid_ou_ids,
             |c, ou_id| Box::pin(c.get_users_by_org_unit(ou_id)),
-            "Users", &emit_progress, 20.0, 5.0, &mut warnings, &cancel_token,
-        ).await;
+            Phase::new("Users", 20.0, 5.0),
+            &emit_progress,
+            &mut warnings,
+            &cancel_token,
+        )
+        .await;
 
         // Deduplicate users by user_id
         let mut seen_ids: HashSet<i64> = HashSet::new();
-        let unique_users: Vec<_> = all_users.into_iter().filter(|u: &crate::models::User| {
-            seen_ids.insert(u.user_id)
-        }).collect();
+        let unique_users: Vec<_> = all_users
+            .into_iter()
+            .filter(|u: &crate::models::User| seen_ids.insert(u.user_id))
+            .collect();
 
-        tracing::info!("Fetched {} unique users ({} before dedup).", unique_users.len(), seen_ids.len());
+        tracing::info!(
+            "Fetched {} unique users ({} before dedup).",
+            unique_users.len(),
+            seen_ids.len()
+        );
 
         let csv_rows: Vec<UserCsvRow> = unique_users.iter().map(Into::into).collect();
-        write_split_export_files(
-            &csv_rows, &unique_users, &output_path, "users",
-            export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-        );
+        out.write_split(&csv_rows, &unique_users, "users");
     }
 
     // Devices (GLOBAL FETCH + FILTER)
@@ -536,12 +510,8 @@ pub async fn start_export(
         emit_progress("Devices", "Fetching system-wide devices...", 40.0);
         match get_scoped_devices(client, &valid_ou_ids, &mut None).await {
             Ok(filtered_devices) => {
-                let csv_rows: Vec<DeviceCsvRow> =
-                    filtered_devices.iter().map(Into::into).collect();
-                write_split_export_files(
-                    &csv_rows, &filtered_devices, &output_path, "devices",
-                    export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-                );
+                let csv_rows: Vec<DeviceCsvRow> = filtered_devices.iter().map(Into::into).collect();
+                out.write_split(&csv_rows, &filtered_devices, "devices");
 
                 // Cache for device_properties / device_assets reuse
                 if options.device_properties || options.device_assets {
@@ -550,7 +520,7 @@ pub async fn start_export(
             }
             Err(msg) => {
                 tracing::error!("{}", msg);
-                errors.push(msg);
+                out.errors.push(msg);
             }
         }
     }
@@ -561,60 +531,71 @@ pub async fn start_export(
     // Access Groups
     if !cancel_token.load(Ordering::Relaxed) && options.access_groups {
         let all_data = fetch_iterative(
-            client, &valid_ou_ids,
+            client,
+            &valid_ou_ids,
             |c, ou_id| Box::pin(c.get_access_groups(ou_id)),
-            "Access Groups", &emit_progress, 60.0, 5.0, &mut warnings, &cancel_token,
-        ).await;
+            Phase::new("Access Groups", 60.0, 5.0),
+            &emit_progress,
+            &mut warnings,
+            &cancel_token,
+        )
+        .await;
 
         let csv_rows: Vec<AccessGroupCsvRow> = all_data.iter().map(Into::into).collect();
-        write_split_export_files(
-            &csv_rows, &all_data, &output_path, "access_groups",
-            export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-        );
+        out.write_split(&csv_rows, &all_data, "access_groups");
     }
 
     // User Roles
     if !cancel_token.load(Ordering::Relaxed) && options.user_roles {
         let all_data = fetch_iterative(
-            client, &valid_ou_ids,
+            client,
+            &valid_ou_ids,
             |c, ou_id| Box::pin(c.get_user_roles(ou_id)),
-            "User Roles", &emit_progress, 70.0, 5.0, &mut warnings, &cancel_token,
-        ).await;
+            Phase::new("User Roles", 70.0, 5.0),
+            &emit_progress,
+            &mut warnings,
+            &cancel_token,
+        )
+        .await;
 
         let csv_rows: Vec<UserRoleCsvRow> = all_data.iter().map(Into::into).collect();
-        write_split_export_files(
-            &csv_rows, &all_data, &output_path, "user_roles",
-            export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-        );
+        out.write_split(&csv_rows, &all_data, "user_roles");
     }
 
     // Org Properties
     if !cancel_token.load(Ordering::Relaxed) && options.org_properties {
         let all_data = fetch_iterative(
-            client, &valid_ou_ids,
+            client,
+            &valid_ou_ids,
             |c, ou_id| Box::pin(c.get_org_properties(ou_id)),
-            "Org Properties", &emit_progress, 80.0, 5.0, &mut warnings, &cancel_token,
-        ).await;
+            Phase::new("Org Properties", 80.0, 5.0),
+            &emit_progress,
+            &mut warnings,
+            &cancel_token,
+        )
+        .await;
 
         let csv_rows: Vec<OrgPropertyCsvRow> = all_data.iter().map(Into::into).collect();
-        write_split_export_files(
-            &csv_rows, &all_data, &output_path, "org_properties",
-            export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-        );
+        out.write_split(&csv_rows, &all_data, "org_properties");
     }
 
     // Device Properties (iterate filtered devices with bounded concurrency)
     if !cancel_token.load(Ordering::Relaxed) && options.device_properties {
-        emit_progress("Device Properties", "Fetching devices for property scan...", 85.0);
+        emit_progress(
+            "Device Properties",
+            "Fetching devices for property scan...",
+            85.0,
+        );
 
-        let devices_in_scope = match get_scoped_devices(client, &valid_ou_ids, &mut cached_device_list).await {
-            Ok(d) => d,
-            Err(msg) => {
-                tracing::error!("{}", msg);
-                errors.push(msg);
-                Vec::new()
-            }
-        };
+        let devices_in_scope =
+            match get_scoped_devices(client, &valid_ou_ids, &mut cached_device_list).await {
+                Ok(d) => d,
+                Err(msg) => {
+                    tracing::error!("{}", msg);
+                    out.errors.push(msg);
+                    Vec::new()
+                }
+            };
 
         if !devices_in_scope.is_empty() {
             use futures::stream::{self, StreamExt};
@@ -650,7 +631,8 @@ pub async fn start_export(
                 match result {
                     Ok(props) => all_props.extend(props),
                     Err(e) => warnings.push(format!(
-                        "Failed to fetch properties for device {}: {}", device_id, e
+                        "Failed to fetch properties for device {}: {}",
+                        device_id, e
                     )),
                 }
             }
@@ -661,12 +643,8 @@ pub async fn start_export(
                 total_devices
             );
 
-            let csv_rows: Vec<DevicePropertyCsvRow> =
-                all_props.iter().map(Into::into).collect();
-            write_split_export_files(
-                &csv_rows, &all_props, &output_path, "device_properties",
-                export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-            );
+            let csv_rows: Vec<DevicePropertyCsvRow> = all_props.iter().map(Into::into).collect();
+            out.write_split(&csv_rows, &all_props, "device_properties");
 
             // Re-cache for device_assets if needed
             if !cancel_token.load(Ordering::Relaxed) && options.device_assets {
@@ -679,14 +657,15 @@ pub async fn start_export(
     if !cancel_token.load(Ordering::Relaxed) && options.device_assets {
         emit_progress("Device Assets", "Fetching devices for asset scan...", 92.0);
 
-        let devices_in_scope = match get_scoped_devices(client, &valid_ou_ids, &mut cached_device_list).await {
-            Ok(d) => d,
-            Err(msg) => {
-                tracing::error!("{}", msg);
-                errors.push(msg);
-                Vec::new()
-            }
-        };
+        let devices_in_scope =
+            match get_scoped_devices(client, &valid_ou_ids, &mut cached_device_list).await {
+                Ok(d) => d,
+                Err(msg) => {
+                    tracing::error!("{}", msg);
+                    out.errors.push(msg);
+                    Vec::new()
+                }
+            };
 
         if !devices_in_scope.is_empty() {
             use futures::stream::{self, StreamExt};
@@ -722,7 +701,8 @@ pub async fn start_export(
                 match result {
                     Ok(asset) => all_assets.push(asset),
                     Err(e) => warnings.push(format!(
-                        "Failed to fetch assets for device {}: {}", device_id, e
+                        "Failed to fetch assets for device {}: {}",
+                        device_id, e
                     )),
                 }
             }
@@ -735,67 +715,72 @@ pub async fn start_export(
 
             let csv_assets: Vec<DeviceAssetFlat> =
                 all_assets.iter().map(DeviceAssetFlat::from).collect();
-            write_split_export_files(
-                &csv_assets, &all_assets, &output_path, "device_assets",
-                export_csv, export_json, &mut files_created, &mut total_records, &mut errors,
-            );
+            out.write_split(&csv_assets, &all_assets, "device_assets");
         }
     }
 
     let cancelled = cancel_token.load(Ordering::Relaxed);
-    let partial = export_is_partial(cancelled, &warnings, &errors);
+    let partial = export_is_partial(cancelled, &warnings, &out.errors);
     if cancelled {
-        emit_progress("Cancelled", "Export cancelled; completed output files were kept", 100.0);
+        emit_progress(
+            "Cancelled",
+            "Export cancelled; completed output files were kept",
+            100.0,
+        );
     } else {
         emit_progress("Complete", "Export finished", 100.0);
     }
 
-    let has_errors = !errors.is_empty();
+    let has_errors = !out.errors.is_empty();
     let message = if cancelled {
         format!(
             "Export cancelled after writing {} records to {} files",
-            total_records,
-            files_created.len()
+            out.total_records,
+            out.files_created.len()
         )
     } else if has_errors {
         format!(
             "{} export: wrote {} records to {} files with {} warning(s) and {} error(s)",
-            if files_created.is_empty() { "Failed" } else { "Partial" },
-            total_records,
-            files_created.len(),
+            if out.files_created.is_empty() {
+                "Failed"
+            } else {
+                "Partial"
+            },
+            out.total_records,
+            out.files_created.len(),
             warnings.len(),
-            errors.len()
+            out.errors.len()
         )
     } else if !warnings.is_empty() {
         format!(
             "Partial export: wrote {} records to {} files with {} warning(s)",
-            total_records,
-            files_created.len(),
+            out.total_records,
+            out.files_created.len(),
             warnings.len()
         )
     } else {
         format!(
             "Exported {} records to {} files",
-            total_records,
-            files_created.len()
+            out.total_records,
+            out.files_created.len()
         )
     };
 
     Ok(ExportResult {
-        success: !cancelled && (!has_errors || !files_created.is_empty()),
+        success: !cancelled && (!has_errors || !out.files_created.is_empty()),
         cancelled,
         partial,
         message,
-        files_created,
-        total_records,
+        files_created: out.files_created,
+        total_records: out.total_records,
         warnings,
-        errors,
+        errors: out.errors,
     })
 }
 
 /// Get filtered devices in scope, reusing cached list if available.
 /// On cache hit, the cache is consumed (taken). On cache miss, fetches fresh and filters.
-async fn get_scoped_devices(
+pub(crate) async fn get_scoped_devices(
     client: &NcClient,
     valid_ou_ids: &HashSet<i64>,
     cache: &mut Option<Vec<crate::models::Device>>,
@@ -819,7 +804,7 @@ async fn get_scoped_devices(
     }
 }
 
-fn site_is_in_scope(
+pub(crate) fn site_is_in_scope(
     site: &crate::models::Site,
     service_org_id: i64,
     customer_ids: &HashSet<i64>,
@@ -834,10 +819,32 @@ fn site_is_in_scope(
 }
 
 fn device_is_in_scope(device: &Device, valid_ou_ids: &HashSet<i64>) -> bool {
-    device.org_unit_id.is_some_and(|id| valid_ou_ids.contains(&id))
-        || device.customer_id.is_some_and(|id| valid_ou_ids.contains(&id))
+    device
+        .org_unit_id
+        .is_some_and(|id| valid_ou_ids.contains(&id))
+        || device
+            .customer_id
+            .is_some_and(|id| valid_ou_ids.contains(&id))
         || device.site_id.is_some_and(|id| valid_ou_ids.contains(&id))
         || device.so_id.is_some_and(|id| valid_ou_ids.contains(&id))
+}
+
+/// A named export phase and the slice of the progress bar it occupies.
+#[derive(Clone, Copy)]
+struct Phase<'a> {
+    name: &'a str,
+    base_percent: f32,
+    percent_range: f32,
+}
+
+impl<'a> Phase<'a> {
+    fn new(name: &'a str, base_percent: f32, percent_range: f32) -> Self {
+        Self {
+            name,
+            base_percent,
+            percent_range,
+        }
+    }
 }
 
 /// Helper to iteratively fetch data from all org units, collecting warnings for failures.
@@ -845,18 +852,21 @@ async fn fetch_iterative<T, F>(
     client: &NcClient,
     valid_ou_ids: &HashSet<i64>,
     fetch_fn: F,
-    phase_name: &str,
+    phase: Phase<'_>,
     emit_progress: &(dyn Fn(&str, &str, f32) + Send + Sync),
-    base_percent: f32,
-    percent_range: f32,
     warnings: &mut Vec<String>,
     cancel_token: &std::sync::atomic::AtomicBool,
 ) -> Vec<T>
 where
-    F: Fn(&NcClient, i64) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::error::ApiResult<Vec<T>>> + Send + '_>>,
+    F: Fn(
+        &NcClient,
+        i64,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = crate::error::ApiResult<Vec<T>>> + Send + '_>,
+    >,
     T: Send,
 {
-    emit_progress(phase_name, "Iterating Org Units...", base_percent);
+    emit_progress(phase.name, "Iterating Org Units...", phase.base_percent);
     let mut all_data = Vec::new();
     let mut ou_list: Vec<i64> = valid_ou_ids.iter().cloned().collect();
     ou_list.sort();
@@ -867,9 +877,9 @@ where
         }
         if idx % 10 == 0 {
             emit_progress(
-                phase_name,
+                phase.name,
                 &format!("Fetching {}/{}", idx, ou_list.len()),
-                base_percent + (idx as f32 / ou_list.len() as f32) * percent_range,
+                phase.base_percent + (idx as f32 / ou_list.len() as f32) * phase.percent_range,
             );
         }
         match fetch_fn(client, *ou_id).await {
@@ -877,7 +887,7 @@ where
             Err(e) => {
                 warnings.push(format!(
                     "Failed to fetch {} for OU {}: {}",
-                    phase_name, ou_id, e
+                    phase.name, ou_id, e
                 ));
             }
         }
@@ -896,9 +906,9 @@ pub fn get_export_types() -> Vec<serde_json::Value> {
         serde_json::json!({"id": "devices", "name": "Devices", "default": true, "migrationComingSoon": true}),
         serde_json::json!({"id": "access_groups", "name": "Access Groups", "default": true}),
         serde_json::json!({"id": "user_roles", "name": "User Roles", "default": true}),
-        serde_json::json!({"id": "org_properties", "name": "Organization Properties", "default": true, "migrationComingSoon": true}),
+        serde_json::json!({"id": "org_properties", "name": "Organization Properties", "default": true}),
         serde_json::json!({"id": "users", "name": "Users", "default": true}),
-        serde_json::json!({"id": "device_properties", "name": "Device Properties", "default": false, "migrationComingSoon": true}),
+        serde_json::json!({"id": "device_properties", "name": "Device Properties", "default": false}),
         serde_json::json!({"id": "device_assets", "name": "Device Assets (Hardware)", "default": false, "migrationComingSoon": true}),
     ]
 }
@@ -906,309 +916,12 @@ pub fn get_export_types() -> Vec<serde_json::Value> {
 /// Cancel a running export or migration
 #[tauri::command]
 pub async fn cancel_export(state: State<'_, AppState>) -> std::result::Result<(), String> {
-    state.cancel_token.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .cancel_token
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     tracing::info!("Operation cancellation requested");
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        device_is_in_scope, export_is_partial, fetch_iterative, site_is_in_scope,
-        write_export_files, write_split_export_files, DeviceAssetFlat, DeviceCsvRow,
-    };
-    use crate::api::NcClient;
-    use crate::models::{Device, DeviceAsset, Site};
-    use serde::Serialize;
-    use std::collections::HashSet;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::Arc;
-    use tempfile::TempDir;
-
-    #[derive(Serialize)]
-    struct TestRecord {
-        id: i32,
-    }
-
-    fn count_exported_records(export_csv: bool, export_json: bool) -> usize {
-        let dir = TempDir::new().expect("temporary directory");
-        let records = vec![TestRecord { id: 1 }, TestRecord { id: 2 }];
-        let mut files_created = Vec::new();
-        let mut total_records = 0;
-        let mut errors = Vec::new();
-
-        write_export_files(
-            &records,
-            dir.path(),
-            "records",
-            export_csv,
-            export_json,
-            &mut files_created,
-            &mut total_records,
-            &mut errors,
-        );
-
-        assert!(errors.is_empty());
-        total_records
-    }
-
-    #[test]
-    fn export_record_count_is_independent_of_selected_formats() {
-        assert_eq!(count_exported_records(true, false), 2);
-        assert_eq!(count_exported_records(false, true), 2);
-        assert_eq!(count_exported_records(true, true), 2);
-    }
-
-    #[test]
-    fn export_issue_classification_distinguishes_partial_and_cancelled_runs() {
-        let warning = vec!["one device could not be fetched".to_string()];
-        let error = vec!["failed to write output".to_string()];
-        assert!(export_is_partial(false, &warning, &[]));
-        assert!(export_is_partial(false, &[], &error));
-        assert!(!export_is_partial(false, &[], &[]));
-        assert!(!export_is_partial(true, &warning, &error));
-    }
-
-    #[test]
-    fn site_scope_includes_org_unit_and_legacy_parent_field_shapes_only() {
-        let customers = HashSet::from([10]);
-        let sites = [
-            serde_json::json!({"siteId": 101, "siteName": "Parent-linked", "parentId": 10}),
-            serde_json::json!({"siteId": 102, "siteName": "Customer-linked", "customerId": 10}),
-            serde_json::json!({"siteId": 103, "siteName": "Legacy-customer", "customerid": 10}),
-            serde_json::json!({"siteId": 104, "siteName": "Org-unit-linked", "orgUnitId": 10}),
-            serde_json::json!({"siteId": 105, "siteName": "SO-linked", "serviceOrgId": 1}),
-            serde_json::json!({"siteId": 106, "siteName": "Legacy-SO-linked", "service_orgid": 1}),
-            serde_json::json!({"siteId": 107, "siteName": "Foreign", "parentId": 99, "customerId": 99})
-        ]
-        .into_iter()
-        .map(|value| serde_json::from_value::<Site>(value).expect("site fixture"))
-        .collect::<Vec<_>>();
-
-        let included = sites
-            .iter()
-            .filter(|site| site_is_in_scope(site, 1, &customers))
-            .map(|site| site.site_id)
-            .collect::<HashSet<_>>();
-
-        assert_eq!(included, HashSet::from([101, 102, 103, 104, 105, 106]));
-    }
-
-    #[test]
-    fn device_scope_matches_service_org_customer_and_site_ids() {
-        let scope = HashSet::from([1, 10, 100]);
-        let devices = [
-            serde_json::json!({"deviceId": 201, "orgUnitId": 10}),
-            serde_json::json!({"deviceId": 202, "customerId": 10}),
-            serde_json::json!({"deviceId": 203, "siteId": 100}),
-            serde_json::json!({"deviceId": 204, "soId": 1}),
-            serde_json::json!({"deviceId": 205, "orgUnitId": 99, "customerId": 99, "siteId": 99, "soId": 99}),
-            serde_json::json!({"deviceId": 206})
-        ]
-        .into_iter()
-        .map(|value| serde_json::from_value::<Device>(value).expect("device fixture"))
-        .collect::<Vec<_>>();
-
-        let included = devices
-            .iter()
-            .filter(|device| device_is_in_scope(device, &scope))
-            .map(|device| device.device_id)
-            .collect::<HashSet<_>>();
-
-        assert_eq!(included, HashSet::from([201, 202, 203, 204]));
-    }
-
-    #[test]
-    fn split_export_record_count_is_not_doubled_for_both_formats() {
-        let dir = TempDir::new().expect("temporary directory");
-        let csv_records = vec![TestRecord { id: 1 }, TestRecord { id: 2 }];
-        let json_records = vec![TestRecord { id: 1 }, TestRecord { id: 2 }];
-        let mut files_created = Vec::new();
-        let mut total_records = 0;
-        let mut errors = Vec::new();
-
-        write_split_export_files(
-            &csv_records,
-            &json_records,
-            dir.path(),
-            "records",
-            true,
-            true,
-            &mut files_created,
-            &mut total_records,
-            &mut errors,
-        );
-
-        assert!(errors.is_empty());
-        assert_eq!(total_records, 2);
-    }
-
-    #[test]
-    fn device_status_is_flattened_for_csv_and_retained_in_json() {
-        let dir = TempDir::new().expect("temporary directory");
-        let device: Device = serde_json::from_value(serde_json::json!({
-            "deviceId": 42,
-            "deviceStatus": {"state": 1, "status": 2},
-            "lastApplianceCheckinTimeLocal": "2025-02-01T05:00:00-05:00"
-        }))
-        .expect("device fixture should deserialize");
-        let csv_rows = vec![DeviceCsvRow::from(&device)];
-        let devices = vec![device];
-        let mut files_created = Vec::new();
-        let mut total_records = 0;
-        let mut errors = Vec::new();
-
-        write_split_export_files(
-            &csv_rows,
-            &devices,
-            dir.path(),
-            "devices",
-            true,
-            true,
-            &mut files_created,
-            &mut total_records,
-            &mut errors,
-        );
-
-        assert!(errors.is_empty());
-        assert_eq!(total_records, 1);
-        let csv = std::fs::read_to_string(dir.path().join("devices.csv"))
-            .expect("device CSV should be written");
-        assert!(csv.contains("deviceStatusState"));
-        assert!(csv.contains(",1,2"));
-        let json: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(dir.path().join("devices.json")).expect("device JSON should exist"),
-        )
-        .expect("device JSON should be valid");
-        assert_eq!(json[0]["deviceStatus"]["state"], 1);
-    }
-
-    #[test]
-    fn asset_json_retains_full_categories_and_links_while_csv_is_flattened() {
-        let dir = TempDir::new().expect("temporary directory");
-        let mut asset: DeviceAsset = serde_json::from_value(serde_json::json!({
-            "data": {
-                "computersystem": {
-                    "manufacturer": "Example",
-                    "model": "Model X"
-                },
-                "_extra": {
-                    "networkadapter": {
-                        "macaddress": "00:11:22:33:44:55"
-                    }
-                }
-            },
-            "_links": {
-                "self": "/api/devices/42/assets"
-            }
-        }))
-        .expect("asset fixture should deserialize");
-        asset.device_id = 42;
-        let csv_assets = vec![DeviceAssetFlat::from(&asset)];
-        let assets = vec![asset];
-        let mut files_created = Vec::new();
-        let mut total_records = 0;
-        let mut errors = Vec::new();
-
-        write_split_export_files(
-            &csv_assets,
-            &assets,
-            dir.path(),
-            "device_assets",
-            true,
-            true,
-            &mut files_created,
-            &mut total_records,
-            &mut errors,
-        );
-
-        assert!(errors.is_empty());
-        assert_eq!(total_records, 1);
-        let csv = std::fs::read_to_string(dir.path().join("device_assets.csv"))
-            .expect("asset CSV should exist");
-        assert!(csv.contains("systemModel"));
-        let json: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(dir.path().join("device_assets.json"))
-                .expect("asset JSON should exist"),
-        )
-        .expect("asset JSON should be valid");
-        assert_eq!(json[0]["data"]["_extra"]["networkadapter"]["macaddress"], "00:11:22:33:44:55");
-        assert_eq!(json[0]["_links"]["self"], "/api/devices/42/assets");
-    }
-
-    #[test]
-    fn iterative_export_does_not_start_requests_after_cancellation() {
-        let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let client = NcClient::new("https://localhost");
-        let cancelled = AtomicBool::new(true);
-        let calls = Arc::new(AtomicUsize::new(0));
-        let mut warnings = Vec::new();
-        let progress = |_: &str, _: &str, _: f32| {};
-        let org_units = HashSet::from([1]);
-        let request_calls = calls.clone();
-
-        let result = runtime.block_on(fetch_iterative(
-            &client,
-            &org_units,
-            move |_, _| {
-                let calls = request_calls.clone();
-                Box::pin(async move {
-                    calls.fetch_add(1, Ordering::Relaxed);
-                    Ok::<Vec<i64>, crate::error::ApiError>(Vec::new())
-                })
-            },
-            "test",
-            &progress,
-            0.0,
-            0.0,
-            &mut warnings,
-            &cancelled,
-        ));
-
-        assert!(result.is_empty());
-        assert_eq!(calls.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn maps_openapi_asset_envelope_into_export_fields() {
-        let mut asset: DeviceAsset = serde_json::from_value(serde_json::json!({
-            "data": {
-                "computersystem": {
-                    "manufacturer": "VMware, Inc.",
-                    "model": "VMware7,1",
-                    "totalphysicalmemory": "2147483648"
-                },
-                "processor": {
-                    "name": "Example CPU",
-                    "numberofcores": "4",
-                    "numberofcpus": "8"
-                },
-                "_extra": {
-                    "motherboard": {
-                        "manufacturer": "Example BIOS vendor",
-                        "serialnumber": "ABC123",
-                        "biosversion": "1.2.3"
-                    }
-                }
-            },
-            "_links": {}
-        }))
-        .expect("OpenAPI asset envelope should deserialize");
-        asset.device_id = 42;
-
-        let flat = DeviceAssetFlat::from(&asset);
-        assert_eq!(flat.device_id, 42);
-        assert_eq!(flat.system_manufacturer.as_deref(), Some("VMware, Inc."));
-        assert_eq!(flat.system_model.as_deref(), Some("VMware7,1"));
-        assert_eq!(flat.total_physical_memory, Some(2_147_483_648));
-        assert_eq!(flat.processor_name.as_deref(), Some("Example CPU"));
-        assert_eq!(flat.processor_cores, Some(4));
-        assert_eq!(flat.processor_logical_processors, Some(8));
-        assert_eq!(
-            flat.bios_manufacturer.as_deref(),
-            Some("Example BIOS vendor")
-        );
-        assert_eq!(flat.bios_serial_number.as_deref(), Some("ABC123"));
-        assert_eq!(flat.bios_version.as_deref(), Some("1.2.3"));
-    }
-}
+mod tests;
