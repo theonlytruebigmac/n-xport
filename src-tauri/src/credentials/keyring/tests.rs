@@ -433,3 +433,24 @@ fn status_reports_the_option_the_file_and_whether_it_is_unlocked() {
     store.lock();
     assert!(!store.status().unlocked && store.status().disk_enabled);
 }
+
+/// keyring 3 falls back to an in-memory mock when no platform backend feature is enabled, which
+/// makes every keychain save look like it failed. These modules only exist with the native
+/// features, so this stops compiling if they are ever dropped from Cargo.toml.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_uses_the_native_keychain() {
+    let _ = std::any::type_name::<keyring::macos::MacCredential>();
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_uses_the_native_credential_store() {
+    let _ = std::any::type_name::<keyring::windows::WinCredential>();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_uses_the_secret_service() {
+    let _ = std::any::type_name::<keyring::secret_service::SsCredential>();
+}
