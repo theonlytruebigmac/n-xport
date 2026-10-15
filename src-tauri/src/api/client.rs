@@ -4,6 +4,7 @@
 //! automatic rate limiting, pagination, and token refresh.
 
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -140,14 +141,39 @@ impl NcClient {
             // Get auth token
             let token = self.auth.get_token().await?;
 
-            let response = self
+            let sent = self
                 .http
                 .request(method.clone(), &url)
                 .query(query)
                 .json(body)
                 .bearer_auth(&token)
                 .send()
-                .await?;
+                .await;
+            let response = match sent {
+                Ok(response) => response,
+                // A dropped connection or timeout on a long run should not lose the item.
+                // Only reads are retried: repeating a create after a timeout could duplicate it.
+                Err(e)
+                    if method == reqwest::Method::GET
+                        && e.status().is_none()
+                        && !e.is_builder()
+                        && retries < self.max_retries =>
+                {
+                    let backoff_secs = 1u64 << retries.min(4);
+                    tracing::warn!(
+                        "Request to {} failed ({}), retrying in {}s (attempt {}/{})",
+                        path,
+                        e,
+                        backoff_secs,
+                        retries + 1,
+                        self.max_retries
+                    );
+                    sleep(Duration::from_secs(backoff_secs)).await;
+                    retries += 1;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
 
             let status = response.status();
 
@@ -163,8 +189,10 @@ impl NcClient {
                     .headers()
                     .get("Retry-After")
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(5);
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(5)
+                    // A huge Retry-After must not freeze a run for hours.
+                    .min(60);
 
                 tracing::warn!("Rate limited, retrying after {} seconds", retry_after);
                 sleep(Duration::from_secs(retry_after)).await;
@@ -236,7 +264,17 @@ impl NcClient {
         }
     }
 
-    /// Fetch all pages of a paginated endpoint
+    /// Fetch all pages of a paginated endpoint.
+    ///
+    /// The server may return fewer items per page than requested (a configured maximum), may
+    /// report only some of `totalItems`/`totalPages`, or, for endpoints without pagination,
+    /// may ignore the page parameters altogether. So the loop stops only on evidence that the
+    /// data is exhausted, never on the requested page size alone:
+    /// - an empty page;
+    /// - the items collected reaching a reported `totalItems`;
+    /// - reaching a reported `totalPages`;
+    /// - with no totals at all, a page shorter than the first one, or a page identical to the
+    ///   previous one (the server is ignoring the page number).
     pub async fn get_all_pages<T, F>(
         &self,
         path: &str,
@@ -244,11 +282,16 @@ impl NcClient {
         mut on_progress: F,
     ) -> ApiResult<Vec<T>>
     where
-        T: DeserializeOwned,
+        T: DeserializeOwned + Serialize,
         F: FnMut(u32, u32),
     {
-        let mut all_items = Vec::new();
+        // Far more than any real tenant; only stops a server that never runs out.
+        const MAX_PAGES: u32 = 100_000;
+
+        let mut all_items: Vec<T> = Vec::new();
         let mut page: u32 = 1;
+        let mut first_page_count: Option<usize> = None;
+        let mut previous_page: Option<String> = None;
 
         loop {
             let params = PaginationParams::new().page(page).page_size(page_size);
@@ -263,51 +306,50 @@ impl NcClient {
                 count,
                 response.page_info
             );
-            let page_info = response.page_info.as_ref();
-            let reported_page_size = page_info
-                .and_then(|info| info.page_size)
-                .filter(|size| *size > 0)
-                .unwrap_or(page_size);
-            let total_pages = page_info.and_then(|info| {
-                info.total_pages.or_else(|| {
-                    info.total_items
-                        .map(|total_items| total_items.div_ceil(reported_page_size))
-                })
+            let reported_total_pages = response.page_info.as_ref().and_then(|i| i.total_pages);
+            let total_items = response.page_info.as_ref().and_then(|i| i.total_items);
+            let page_fingerprint = serde_json::to_string(&response.data).ok();
+            let effective_page_size = *first_page_count.get_or_insert(count);
+
+            let estimated_total_pages = reported_total_pages.or_else(|| {
+                total_items.map(|total| total.div_ceil(effective_page_size.max(1) as u32))
             });
-            on_progress(page, total_pages.unwrap_or(page));
-            all_items.extend(response.data);
-
-            // Safety: always break if no items returned
-            if count == 0 {
-                break;
-            }
-
-            if total_pages.is_some_and(|total| page >= total) {
-                break;
-            }
-
-            let has_more_by_total_items =
-                page_info
-                    .and_then(|info| info.total_items)
-                    .is_some_and(|total_items| {
-                        u64::from(page) * u64::from(reported_page_size) < u64::from(total_items)
-                    });
-            if total_pages.is_none()
-                && page_info.and_then(|info| info.total_items).is_none()
-                && (count as u32) < page_size
-            {
-                tracing::info!(
-                    "Received partial page ({} < {}), assuming end of data",
-                    count,
-                    page_size
+            on_progress(page, estimated_total_pages.unwrap_or(page));
+            if count > 0 && previous_page.as_ref() == page_fingerprint.as_ref() {
+                tracing::warn!(
+                    "{} returned the same page twice; the server is ignoring pagination",
+                    path
                 );
                 break;
             }
+            all_items.extend(response.data);
 
-            if page_info.and_then(|info| info.total_items).is_some() && !has_more_by_total_items {
+            if count == 0 {
+                break;
+            }
+            if total_items.is_some_and(|total| all_items.len() as u64 >= u64::from(total)) {
+                break;
+            }
+            if reported_total_pages.is_some_and(|total| page >= total) {
+                break;
+            }
+            if total_items.is_none()
+                && reported_total_pages.is_none()
+                && count < effective_page_size
+            {
+                tracing::info!(
+                    "Received a short page ({} < {}) with no totals, assuming end of data",
+                    count,
+                    effective_page_size
+                );
+                break;
+            }
+            if page >= MAX_PAGES {
+                tracing::warn!("{}: stopped after {} pages", path, MAX_PAGES);
                 break;
             }
 
+            previous_page = page_fingerprint;
             page += 1;
         }
 

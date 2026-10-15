@@ -214,7 +214,8 @@ async fn repeated_org_property_rows_are_safe_repeat_writes_in_file_order() {
                 "propertyName": "Asset Tag",
                 "value": "old",
                 "propertyType": "TEXT"
-            }]
+            }],
+            "totalItems": 1
         })),
         ("PUT", "/api/org-units/1/custom-properties/5") => json_response(serde_json::json!({})),
         _ => not_found(),
@@ -293,10 +294,12 @@ async fn repeated_device_property_rows_write_to_the_one_matching_device() {
             "data": [
                 { "deviceId": 77, "longName": "SRV-01", "customerId": 10 },
                 { "deviceId": 78, "longName": "SRV-02", "customerId": 10 }
-            ]
+            ],
+            "totalItems": 2
         })),
         ("GET", "/api/devices/77/custom-properties") => json_response(serde_json::json!({
-            "data": [{ "propertyId": 9, "propertyName": "Owner", "propertyType": "TEXT" }]
+            "data": [{ "propertyId": 9, "propertyName": "Owner", "propertyType": "TEXT" }],
+            "totalItems": 1
         })),
         ("PUT", "/api/devices/77/custom-properties/9") => json_response(serde_json::json!({})),
         _ => not_found(),

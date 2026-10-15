@@ -58,7 +58,15 @@ impl Drop for MockServer {
 /// Start a server whose responses come from `handler(method, path, body)`.
 /// Authentication is answered automatically and is not recorded.
 pub async fn start(
-    handler: impl FnMut(&str, &str, &str) -> (u16, String) + Send + 'static,
+    mut handler: impl FnMut(&str, &str, &str) -> (u16, String) + Send + 'static,
+) -> MockServer {
+    start_with_query(move |method, path, _query, body| handler(method, path, body)).await
+}
+
+/// Like [`start`], but the handler also receives the raw query string (without the `?`), for
+/// servers whose answer depends on paging parameters.
+pub async fn start_with_query(
+    handler: impl FnMut(&str, &str, &str, &str) -> (u16, String) + Send + 'static,
 ) -> MockServer {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -79,7 +87,10 @@ pub async fn start(
                 let Some((method, target, body)) = read_request(&mut stream).await else {
                     return;
                 };
-                let path = target.split('?').next().unwrap_or_default().to_string();
+                let (path, query) = match target.split_once('?') {
+                    Some((path, query)) => (path.to_string(), query.to_string()),
+                    None => (target.clone(), String::new()),
+                };
                 let (status, response_body) = if path == "/api/auth/authenticate" {
                     (200, AUTH_RESPONSE.to_string())
                 } else {
@@ -91,7 +102,7 @@ pub async fn start(
                             path: path.clone(),
                             body: body.clone(),
                         });
-                    (handler.lock().expect("handler lock"))(&method, &path, &body)
+                    (handler.lock().expect("handler lock"))(&method, &path, &query, &body)
                 };
                 let reason = match status {
                     200 => "OK",

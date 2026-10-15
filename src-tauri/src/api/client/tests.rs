@@ -405,3 +405,215 @@ async fn sends_create_requests_with_openapi_routes_and_payload_shapes() {
         }),
     );
 }
+
+mod paging_behaviour {
+    use crate::test_support::{authenticated_client, json_response, start_with_query, MockServer};
+
+    /// How a fake server reports and honours paging.
+    #[derive(Clone, Copy)]
+    struct Server {
+        items: usize,
+        /// The most items the server will return per page, whatever is asked for.
+        max_page_size: usize,
+        report_total_items: bool,
+        report_total_pages: bool,
+        /// Ignore the page number and always answer with the first page.
+        ignore_paging: bool,
+    }
+
+    fn param(query: &str, name: &str) -> Option<usize> {
+        query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix(&format!("{}=", name)))
+            .and_then(|value| value.parse().ok())
+    }
+
+    async fn serve(config: Server) -> MockServer {
+        start_with_query(move |_, _, query, _| {
+            let requested = param(query, "pageSize").unwrap_or(config.max_page_size);
+            let size = requested.min(config.max_page_size).max(1);
+            let page = if config.ignore_paging {
+                1
+            } else {
+                param(query, "pageNumber").unwrap_or(1)
+            };
+            let start = ((page - 1) * size).min(config.items);
+            let end = (start + size).min(config.items);
+            let mut body = serde_json::json!({ "data": (start..end).collect::<Vec<_>>() });
+            if config.report_total_items {
+                body["totalItems"] = config.items.into();
+            }
+            if config.report_total_pages {
+                body["totalPages"] = config.items.div_ceil(size).into();
+            }
+            json_response(body)
+        })
+        .await
+    }
+
+    async fn fetch_all(config: Server, requested_page_size: u32) -> (Vec<usize>, usize) {
+        let server = serve(config).await;
+        let client = authenticated_client(&server).await;
+        let items: Vec<usize> = client
+            .get_all_pages("/api/test", requested_page_size, |_, _| {})
+            .await
+            .expect("paged fetch");
+        (items, server.count("GET", "/api/test"))
+    }
+
+    fn base(items: usize) -> Server {
+        Server {
+            items,
+            max_page_size: 1000,
+            report_total_items: true,
+            report_total_pages: true,
+            ignore_paging: false,
+        }
+    }
+
+    fn all(items: usize) -> Vec<usize> {
+        (0..items).collect()
+    }
+
+    #[tokio::test]
+    async fn gets_every_page_when_the_server_reports_everything() {
+        let (items, requests) = fetch_all(base(250), 100).await;
+        assert_eq!(items, all(250));
+        assert_eq!(requests, 3);
+    }
+
+    #[tokio::test]
+    async fn gets_every_page_when_the_server_caps_the_page_size_below_the_request() {
+        // Asked for 100 per page, the server gives 50. With only `totalItems`, the page count
+        // must not be worked out from the requested size.
+        for (total_items, total_pages) in [(true, false), (true, true), (false, true)] {
+            let config = Server {
+                max_page_size: 50,
+                report_total_items: total_items,
+                report_total_pages: total_pages,
+                ..base(130)
+            };
+            let (items, _) = fetch_all(config, 100).await;
+            assert_eq!(
+                items,
+                all(130),
+                "totalItems={total_items} totalPages={total_pages}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn gets_every_page_with_no_totals_even_when_the_server_caps_the_page_size() {
+        let config = Server {
+            max_page_size: 50,
+            report_total_items: false,
+            report_total_pages: false,
+            ..base(130)
+        };
+        let (items, _) = fetch_all(config, 100).await;
+        assert_eq!(items, all(130));
+    }
+
+    #[tokio::test]
+    async fn handles_a_total_that_is_an_exact_multiple_of_the_page_size() {
+        let (items, requests) = fetch_all(base(200), 100).await;
+        assert_eq!(items, all(200));
+        assert_eq!(
+            requests, 2,
+            "no request past the last full page when totals are known"
+        );
+
+        let no_totals = Server {
+            report_total_items: false,
+            report_total_pages: false,
+            ..base(200)
+        };
+        let (items, _) = fetch_all(no_totals, 100).await;
+        assert_eq!(items, all(200));
+    }
+
+    #[tokio::test]
+    async fn handles_empty_and_single_item_results() {
+        assert_eq!(fetch_all(base(0), 100).await, (vec![], 1));
+        assert_eq!(fetch_all(base(1), 100).await, (vec![0], 1));
+    }
+
+    #[tokio::test]
+    async fn stops_when_the_server_ignores_paging_instead_of_looping() {
+        // Endpoints that are not paginated answer every request with the full list.
+        for (total_items, total_pages) in [(false, false), (true, false)] {
+            let config = Server {
+                report_total_items: total_items,
+                report_total_pages: total_pages,
+                ignore_paging: true,
+                ..base(7)
+            };
+            let (items, requests) = fetch_all(config, 5).await;
+            assert_eq!(items, all(5));
+            assert!(requests <= 3, "stopped after {requests} requests");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_dropped_connection_on_a_read_is_retried_but_a_write_is_not() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address = listener.local_addr().expect("address");
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let seen = dropped.clone();
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buffer = vec![0u8; 8192];
+            let count = stream.read(&mut buffer).await.unwrap_or(0);
+            let head = String::from_utf8_lossy(&buffer[..count]).into_owned();
+            let line = head.lines().next().unwrap_or_default().to_string();
+            let body = if line.contains("/api/auth/authenticate") {
+                AUTH_RESPONSE.to_string()
+            } else if line.starts_with("GET /api/flaky") && seen.fetch_add(1, Ordering::SeqCst) == 0
+            {
+                continue; // drop the connection without answering
+            } else if line.starts_with("POST /api/writes") {
+                seen.fetch_add(100, Ordering::SeqCst);
+                continue;
+            } else {
+                r#"{"data":[1,2,3],"totalItems":3}"#.to_string()
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
+    });
+
+    let client = NcClient::new(&format!("http://{}", address));
+    authenticate(&client).await;
+
+    let items: Vec<i32> = client
+        .get_all_pages("/api/flaky", 100, |_, _| {})
+        .await
+        .expect("the read succeeds after one retry");
+    assert_eq!(items, vec![1, 2, 3]);
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        2,
+        "one dropped attempt, one success"
+    );
+
+    let write: Result<serde_json::Value, _> = client
+        .post("/api/writes", &serde_json::json!({"name": "x"}))
+        .await;
+    assert!(write.is_err());
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        102,
+        "the write was attempted exactly once"
+    );
+    server.abort();
+}
