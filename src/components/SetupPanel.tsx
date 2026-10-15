@@ -1,10 +1,10 @@
 import type { Profile, ConnectionStatus, LogEntry } from '../types';
 import * as api from '../api';
-import { CredentialStorageCard } from './CredentialStorageCard';
 import { ServiceOrgCombobox } from './ServiceOrgCombobox';
+import { ImportTemplatesMenu } from './ImportTemplatesMenu';
 
 interface SetupPanelProps {
-  appMode: 'export' | 'migrate' | 'import';
+  appMode: 'export' | 'migrate' | 'import' | 'installers';
   profiles: Profile[];
   activeProfile: Profile | null;
   fqdn: string;
@@ -104,7 +104,7 @@ export function SetupPanel({
             finalDestSoId = id;
             if (finalDestSoId !== result.serviceOrgId) {
               try {
-                const info = await api.getServiceOrgInfo(finalDestSoId);
+                const info = await api.getServiceOrgInfo(finalDestSoId, true);
                 finalDestSoName = info.name;
               } catch {
                 finalDestSoName = `Unknown (ID: ${finalDestSoId})`;
@@ -134,7 +134,7 @@ export function SetupPanel({
   const renderProfileList = () => (
     <div className="card card-compact fade-in">
       <div className="card-header">
-        <h2 className="card-title" style={{ fontSize: '0.95rem' }}>Profiles</h2>
+        <h2 className="card-title">Profiles</h2>
       </div>
       <div className="profile-list" style={{ display: 'grid', gap: 4 }}>
         {profiles.length === 0 ? (
@@ -142,7 +142,7 @@ export function SetupPanel({
             <div className="icon">∅</div>
             <div className="title">No saved profiles yet</div>
             <div className="desc">Profiles store your server FQDN, username, and SO so you can re-connect with one click.</div>
-            <button className="btn btn-primary" style={{ fontSize: 12, padding: '7px 14px' }} onClick={onShowNewProfile}>
+            <button className="btn btn-primary" onClick={onShowNewProfile}>
               + Create your first profile
             </button>
           </div>
@@ -169,7 +169,7 @@ export function SetupPanel({
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     <button
                       title="Delete profile"
-                      style={{ background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '4px 6px', fontSize: 'var(--text-base)' }}
                       onClick={async (e) => {
                         e.stopPropagation();
                         if (confirm(`Delete profile "${profile.name}"?`)) {
@@ -179,12 +179,20 @@ export function SetupPanel({
                             await api.deleteCredentials(profile.name);
                             await api.deleteProfile(profile.name);
                             addLog('info', `Deleted profile "${profile.name}"`);
-                            await loadProfiles();
                             if (activeProfile?.name === profile.name) {
+                              // Forget everything the deleted profile had filled in, so none of
+                              // its server details or token are left in the form.
                               setActiveProfile(null);
                               setFqdn('');
+                              setJwt('');
+                              setApiUsername('');
                               setServiceOrgId('');
+                              setDestFqdn('');
+                              setDestJwt('');
+                              setDestApiUsername('');
+                              setDestServiceOrgId('');
                             }
+                            await loadProfiles();
                           } catch (err) {
                             addLog('error', `Failed to delete: ${err}`);
                           }
@@ -222,7 +230,7 @@ export function SetupPanel({
             {label} <span className="header-accent">Connection</span>
           </h2>
           {isConnected && (
-            <span className="conn-chip" style={{ fontSize: 11 }}>
+            <span className="conn-chip">
               <span className="dot" />Connected
             </span>
           )}
@@ -232,7 +240,7 @@ export function SetupPanel({
           <input type="text" className="form-input" placeholder="ncentral.example.com" value={fqdnVal} onChange={e => setFqdnVal(e.target.value)} />
         </div>
         <div className="form-group">
-          <label className="form-label">API Username <span className="text-secondary" style={{ fontSize: '0.7em' }}>(required for user creation)</span></label>
+          <label className="form-label">API Username <span className="label-hint">required for user creation</span></label>
           <input type="text" className="form-input" placeholder="admin@example.com" value={userVal} onChange={e => setUserVal(e.target.value)} />
         </div>
         <div className="form-group">
@@ -243,7 +251,7 @@ export function SetupPanel({
         <div className="form-group" style={{ borderTop: '1px dashed var(--color-border)', paddingTop: 'var(--space-md)' }}>
           <label className="form-label">
             Target Service Org
-            {!isConnected && <span style={{ color: 'var(--color-text-muted)', fontWeight: 400, marginLeft: 6, fontSize: '0.7em' }}>(available after connect)</span>}
+            {!isConnected && <span className="label-hint">available after connect</span>}
           </label>
           <ServiceOrgCombobox
             value={soVal}
@@ -251,6 +259,7 @@ export function SetupPanel({
             enabled={isConnected}
             placeholder="Select or type a service org…"
             initialName={isDest ? destConnectedServiceOrg?.name : connectedServiceOrg?.name}
+            destination={isDest}
           />
         </div>
 
@@ -272,15 +281,18 @@ export function SetupPanel({
 
   return (
     <div className="centered-dashboard fade-in">
+      {appMode === 'import' && (
+        <div className="setup-templates-row">
+          <span>Need a CSV to start from? Templates don't need a connection.</span>
+          <ImportTemplatesMenu addLog={addLog} />
+        </div>
+      )}
       <div className={`setup-split${appMode === 'migrate' ? ' migrate' : ''}`}>
         {renderProfileList()}
         <div className={appMode === 'migrate' ? 'connection-pair' : ''} style={appMode === 'migrate' ? undefined : { display: 'grid', gap: 16 }}>
           {renderConnectionCard(appMode === 'migrate' ? 'Source' : 'Direct', false)}
           {appMode === 'migrate' && renderConnectionCard('Destination', true)}
         </div>
-      </div>
-      <div style={{ marginTop: 16 }}>
-        <CredentialStorageCard addLog={addLog} onChanged={loadProfiles} />
       </div>
     </div>
   );

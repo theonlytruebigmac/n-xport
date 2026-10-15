@@ -188,7 +188,7 @@ export function CredentialStorageCard({ addLog, onChanged }: CredentialStorageCa
     return (
         <div className="card card-compact credstore" aria-label="Credential storage">
             <div className="card-header">
-                <h2 className="card-title" style={{ fontSize: '0.95rem' }}>Credential storage</h2>
+                <h2 className="card-title">Credential storage</h2>
             </div>
             {status.legacyEntries > 0 && (
                 <div className="soap-api-notice" role="alert">

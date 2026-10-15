@@ -44,6 +44,18 @@
   --color-error: #f87171;
   --color-error-bg: rgba(248, 113, 113, 0.12);
 
+  /* Type scale: one set of sizes for the whole app. Nothing is smaller than --text-xs. */
+  --text-xs: 0.75rem;    /* 12px: captions, badges, hints, field labels */
+  --text-sm: 0.8125rem;  /* 13px: secondary text, compact controls */
+  --text-base: 0.875rem; /* 14px: body, inputs, tiles, buttons */
+  --text-md: 1rem;       /* 16px: card and section titles */
+  --text-lg: 1.25rem;    /* 20px: page titles */
+  --text-xl: 1.75rem;    /* 28px: big numbers */
+  --text-hero: 2rem;     /* 32px: the home title */
+
+  /* Layout */
+  --content-width: 1120px;
+
   /* Spacing */
   --space-xs: 4px;
   --space-sm: 8px;
@@ -123,7 +135,7 @@ body {
 }
 
 .header-title h1 {
-  font-size: 1.25rem;
+  font-size: var(--text-lg);
   font-weight: 800;
   color: var(--color-text-primary);
   letter-spacing: -0.02em;
@@ -174,7 +186,7 @@ body {
 }
 
 .sidebar-section-title {
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -190,16 +202,6 @@ body {
 }
 
 /* Cards */
-.card {
-  background: var(--color-bg-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-md);
-  backdrop-filter: blur(20px);
-  box-shadow: var(--shadow-md);
-  position: relative;
-}
-
 .card-compact {
   padding: var(--space-lg);
 }
@@ -216,17 +218,6 @@ body {
   margin-bottom: 0;
 }
 
-.card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--color-accent), transparent);
-  opacity: 0.3;
-}
-
 .card-header {
   display: flex;
   align-items: center;
@@ -235,23 +226,23 @@ body {
 }
 
 .card-title {
-  font-size: 0.875rem;
-  font-weight: 700;
+  font-size: var(--text-md);
+  font-weight: 600;
 }
 
 /* Form Elements */
 .form-group {
-  margin-bottom: 6px;
+  margin-bottom: var(--space-md);
 }
 
 .form-label {
   display: block;
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--color-text-secondary);
-  margin-bottom: 2px;
+  margin-bottom: 6px;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
 }
 
 .form-input {
@@ -261,7 +252,7 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   font-weight: 400;
   font-family: inherit;
   transition: var(--transition-fast);
@@ -279,20 +270,20 @@ body {
 }
 
 .form-help {
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   color: var(--color-text-secondary);
   line-height: 1.4;
 }
 
 .form-label-sm {
-  font-size: 0.625rem;
+  font-size: var(--text-xs);
 }
 
 .btn-link {
   background: none;
   border: none;
   color: var(--color-accent);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   cursor: pointer;
   padding: 2px 6px;
@@ -326,7 +317,7 @@ body {
 
 .form-input.mono {
   font-family: var(--font-mono);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
 }
 
 /* Buttons */
@@ -335,8 +326,9 @@ body {
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
+  min-height: 36px;
   padding: var(--space-sm) var(--space-md);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   font-weight: 500;
   font-family: inherit;
   border: none;
@@ -348,19 +340,6 @@ body {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.btn-primary {
-  background: var(--color-accent);
-  color: var(--color-bg-primary);
-  box-shadow: var(--shadow-sm);
-  border: none;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md), var(--shadow-glow);
 }
 
 .btn-secondary {
@@ -385,8 +364,9 @@ body {
 }
 
 .btn-lg {
-  padding: 12px var(--space-lg);
-  font-size: 0.9375rem;
+  min-height: 44px;
+  padding: 10px var(--space-lg);
+  font-size: var(--text-md);
   font-weight: 600;
   border-radius: var(--radius-lg);
   margin-top: var(--space-sm);
@@ -402,6 +382,7 @@ body {
 .checkbox-item {
   display: flex;
   align-items: center;
+  min-height: 44px;
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   background: var(--color-bg-input);
@@ -416,8 +397,8 @@ body {
 }
 
 .checkbox-item.selected {
-  background: var(--color-info-bg);
-  border-color: var(--color-info);
+  background: rgba(167, 139, 250, 0.06);
+  border-color: var(--color-accent);
 }
 
 .checkbox-item input {
@@ -427,7 +408,7 @@ body {
 }
 
 .checkbox-item span {
-  font-size: 0.875rem;
+  font-size: var(--text-base);
 }
 
 /* Progress */
@@ -454,23 +435,11 @@ body {
   display: flex;
   justify-content: space-between;
   margin-top: var(--space-sm);
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
 }
 
 /* Log Panel */
-.log-panel {
-  background: var(--color-bg-input);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--space-md);
-  max-height: 300px;
-  overflow-y: auto;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  line-height: 1.6;
-}
-
 .log-entry {
   color: var(--color-text-secondary);
 }
@@ -495,7 +464,7 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
-  font-size: 0.9375rem;
+  font-size: var(--text-md);
   font-family: inherit;
   cursor: pointer;
 }
@@ -518,7 +487,7 @@ body {
 .tab {
   flex: 1;
   padding: var(--space-sm) var(--space-md);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   font-weight: 500;
   color: var(--color-text-secondary);
   background: transparent;
@@ -543,7 +512,7 @@ body {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-weight: 500;
   border-radius: 9999px;
 }
@@ -615,10 +584,6 @@ body {
   }
 }
 
-.fade-in {
-  animation: fadeIn var(--transition-normal) forwards;
-}
-
 @keyframes pulse {
 
   0%,
@@ -647,7 +612,8 @@ body {
 
 .centered-dashboard {
   width: 100%;
-  max-width: 1180px;
+  max-width: var(--content-width);
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
@@ -684,7 +650,7 @@ body {
   gap: 6px;
   padding: 4px 12px 4px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 500;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -788,11 +754,11 @@ body {
 
 .profile-name {
   font-weight: 700;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
 }
 
 .profile-fqdn {
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -809,7 +775,7 @@ body {
   border: none;
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -830,7 +796,17 @@ body {
 /* Data Types Grid */
 .data-types-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* Every row is as tall as the tallest tile, so one long label doesn't make a row stand out */
+  grid-auto-rows: 1fr;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+/* Format choices: equal-width tiles instead of tiles sized to their label */
+.format-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 140px));
   gap: var(--space-sm);
   margin-top: var(--space-sm);
 }
@@ -876,12 +852,12 @@ body {
   color: var(--color-accent);
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
 }
 
 .progress-message {
   margin-top: var(--space-xs);
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
   font-style: italic;
 }
@@ -894,7 +870,7 @@ body {
 }
 
 .logs-header {
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-weight: 800;
   text-transform: uppercase;
   color: var(--color-text-muted);
@@ -911,6 +887,9 @@ body {
   padding: var(--space-md);
   height: 300px;
   overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
 }
 
 .log-time {
@@ -931,7 +910,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   box-shadow: var(--shadow-lg);
   cursor: pointer;
@@ -971,7 +950,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 4px 10px;
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -1003,7 +982,7 @@ body {
   border-radius: var(--radius-md);
   padding: var(--space-md);
   font-family: var(--font-mono);
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
   line-height: 1.6;
   overflow-x: auto;
   color: var(--color-text-secondary);
@@ -1047,14 +1026,14 @@ body {
 }
 
 .nav-section-title {
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .nav-section-chevron {
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   transition: transform var(--transition-fast);
 }
 
@@ -1072,7 +1051,7 @@ body {
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
   color: var(--color-text-secondary);
   cursor: pointer;
   transition: var(--transition-fast);
@@ -1118,11 +1097,8 @@ body {
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
   backdrop-filter: blur(12px);
-}
-
-.card::before {
-  display: none;
-  /* Remove the top gradient line for cleaner look */
+  box-shadow: var(--shadow-md);
+  position: relative;
 }
 
 .card:hover {
@@ -1136,13 +1112,17 @@ body {
 /* Button refinements */
 .btn-primary {
   background: var(--color-action-green);
-  color: #fff;
+  /* Dark text: white on this green is hard to read */
+  color: var(--color-bg-primary);
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  border: none;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #16a34a;
-  box-shadow: 0 0 16px rgba(34, 197, 94, 0.3);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 0 16px rgba(52, 211, 153, 0.3);
 }
 
 /* Mode toggle pills */
@@ -1156,7 +1136,7 @@ body {
 
 .mode-toggle-option {
   padding: var(--space-sm) var(--space-md);
-  font-size: 0.8125rem;
+  font-size: var(--text-sm);
   font-weight: 500;
   border-radius: var(--radius-sm);
   border: none;
@@ -1188,7 +1168,7 @@ body {
   border-radius: 999px;
   background: var(--color-success-bg);
   color: var(--color-success);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -1215,7 +1195,7 @@ body {
   border: none;
   color: var(--color-error);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
   padding: 0 0 0 6px;
@@ -1236,7 +1216,7 @@ body {
   background: rgba(255, 255, 255, 0.12);
   color: rgba(255, 255, 255, 0.65);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 500;
   vertical-align: middle;
 }
@@ -1275,7 +1255,7 @@ body {
   color: var(--color-text-primary);
   padding: 0 12px;
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   outline: none;
   width: 100%;
 }
@@ -1296,7 +1276,7 @@ body {
   background: rgba(167, 139, 250, 0.15);
   color: var(--color-accent);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 500;
 }
 .combo-icon-btn {
@@ -1306,7 +1286,7 @@ body {
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-base);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1341,7 +1321,7 @@ body {
   overflow-y: auto;
 }
 .combo-pop-head {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1365,7 +1345,7 @@ body {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .combo-row:hover {
   background: var(--color-bg-tertiary);
@@ -1382,19 +1362,19 @@ body {
 }
 .combo-row-id {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
 }
 .combo-pop-foot {
   border-top: 1px solid var(--color-border);
   margin-top: 4px;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
 }
 .combo-status-row {
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
   display: flex;
   align-items: center;
@@ -1419,7 +1399,7 @@ body {
   background: var(--color-bg-input);
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
 }
@@ -1429,7 +1409,7 @@ body {
 }
 .templates-trigger .caret {
   opacity: 0.6;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .templates-pop {
   position: absolute;
@@ -1444,7 +1424,7 @@ body {
   z-index: 20;
 }
 .templates-pop-head {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1459,7 +1439,7 @@ body {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-primary);
   background: transparent;
   border: none;
@@ -1472,7 +1452,7 @@ body {
 }
 .templates-pop-item .arrow {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 /* Compact dry-run pill toggle (lives in card-actions footer) */
@@ -1485,7 +1465,7 @@ body {
   border: 1px solid rgba(251, 191, 36, 0.3);
   background: var(--color-warning-bg);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 500;
   color: var(--color-warning);
   user-select: none;
@@ -1547,7 +1527,7 @@ body {
 }
 .card-actions .meta {
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 /* Profile list (split-pane Setup) */
@@ -1575,26 +1555,26 @@ body {
 }
 .profile-list .item .name {
   font-weight: 500;
-  font-size: 13px;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .profile-list .item .sub {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .profile-list .item .lastrun {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
 }
 .profile-list .item .badge {
-  font-size: 10px;
+  font-size: var(--text-xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--color-text-muted);
@@ -1611,7 +1591,7 @@ body {
   color: var(--color-text-secondary);
   text-align: center;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-sm);
   background: transparent;
   width: 100%;
   font-family: inherit;
@@ -1628,17 +1608,17 @@ body {
   background: rgba(167, 139, 250, 0.04);
 }
 .profile-list .empty .icon {
-  font-size: 28px;
+  font-size: var(--text-xl);
   opacity: 0.4;
   margin-bottom: 8px;
 }
 .profile-list .empty .title {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   margin-bottom: 4px;
 }
 .profile-list .empty .desc {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
   margin-bottom: 14px;
 }
@@ -1661,7 +1641,7 @@ body {
   right: 12px;
   padding: 3px 8px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1685,13 +1665,13 @@ body {
   background: var(--color-bg-input);
 }
 .stat .count {
-  font-size: 28px;
+  font-size: var(--text-xl);
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1;
 }
 .stat .label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1737,7 +1717,7 @@ body {
   border-radius: var(--radius-md);
   background: var(--color-warning-bg);
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
   line-height: 1.45;
 }
 .soap-api-notice strong {
@@ -1752,37 +1732,43 @@ body {
   border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   color: var(--color-text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
   line-height: 1.45;
 }
+.preflight-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .preflight-title { font-weight: 600; color: var(--color-text-primary); }
-.preflight-scope { margin-top: 2px; color: var(--color-text-muted); }
+.preflight-scope { color: var(--color-text-muted); font-size: var(--text-sm); }
 .preflight-warning { margin-top: 8px; color: var(--color-warning); }
-.preflight-steps { margin: 10px 0 0; padding-left: 20px; }
-.preflight-steps li { margin-bottom: 8px; }
+/* Steps in two columns; the full descriptions are under the details toggle (and in each step's tooltip) */
+.preflight-steps { margin: 8px 0 0; padding-left: 20px; display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; row-gap: 2px; }
+.preflight-steps li { margin: 0; }
 .preflight-step-label { font-weight: 600; color: var(--color-text-primary); }
 .preflight-soap {
   margin-left: 8px;
   padding: 1px 6px;
   border-radius: var(--radius-sm, 4px);
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   background: var(--color-bg-tertiary);
 }
 .preflight-soap-fallback, .preflight-soap-preferred, .preflight-soap-required { color: var(--color-warning); }
-.preflight-step-details { color: var(--color-text-muted); }
+.preflight-more { margin-top: 8px; }
+.preflight-more summary { cursor: pointer; color: var(--color-text-muted); }
+.preflight-more[open] { max-height: 180px; overflow-y: auto; }
+.preflight-step-details { color: var(--color-text-muted); margin-top: 6px; }
+.preflight-step-details strong { color: var(--color-text-secondary); }
 .preflight-prereq {
-  margin-top: 10px;
-  padding: 8px 10px;
+  margin-top: 8px;
+  padding: 6px 10px;
   border: 1px solid rgba(251, 191, 36, 0.3);
   border-radius: var(--radius-md);
   background: var(--color-warning-bg);
 }
 .preflight-prereq strong { color: var(--color-warning); }
-.preflight-prereq ul { margin: 4px 0 0; padding-left: 20px; }
-.credstore-text { margin: 6px 0; font-size: 0.85rem; color: var(--color-text-secondary); line-height: 1.45; }
+.preflight-prereq ul { margin: 2px 0 0; padding-left: 20px; }
+.credstore-text { margin: 6px 0; font-size: var(--text-sm); color: var(--color-text-secondary); line-height: 1.45; }
 .credstore-form { display: grid; gap: 6px; margin: 8px 0; max-width: 420px; }
 .credstore-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.credstore-error { margin-top: 8px; color: var(--color-error); font-size: 0.85rem; }
+.credstore-error { margin-top: 8px; color: var(--color-error); font-size: var(--text-sm); }
 .preflight-followup { margin-top: 10px; }
 .preflight-followup ul { margin: 4px 0 0; padding-left: 20px; }
 
@@ -1811,7 +1797,7 @@ body {
 }
 .confirm-strip .text {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-secondary);
 }
 .confirm-strip .text strong {
@@ -1842,23 +1828,15 @@ body {
   color: rgba(0, 0, 0, 0.6);
 }
 
-/* Setup split-pane layout. The right column has a max-width so the
-   single Direct Connection card doesn't sprawl in wide windows. */
+/* Setup split-pane layout: profiles on the left, the connection card(s) filling the rest. */
 .setup-split {
   display: grid;
-  grid-template-columns: 280px minmax(0, 720px);
-  gap: 20px;
-  justify-content: center;
-  align-self: center;
-  width: 100%;
-  margin-top: 24px;
-}
-.setup-split.migrate {
   grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-md);
+  width: 100%;
 }
 @media (max-width: 900px) {
-  .setup-split,
-  .setup-split.migrate {
+  .setup-split {
     grid-template-columns: 1fr;
   }
 }
@@ -1868,8 +1846,8 @@ body {
 .connection-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  align-items: start;
+  gap: var(--space-md);
+  align-items: stretch;
 }
 @media (max-width: 1100px) {
   .connection-pair {
@@ -1879,7 +1857,7 @@ body {
 
 /* Card section header (small uppercase microlabel) */
 .card-section-head {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1891,8 +1869,9 @@ body {
 .resource-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  min-height: 44px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -1929,29 +1908,124 @@ body {
   background: var(--color-accent);
 }
 .resource-card .name {
-  font-weight: 500;
+  /* same type as the export/migrate tiles (.checkbox-item span) */
+  font-size: var(--text-base);
+  font-weight: 400;
   flex: 1;
 }
 
 .unsupported-list {
-  margin-top: 14px;
-  padding: 12px 14px;
+  margin-top: 10px;
+  padding: 8px 14px;
   background: var(--color-bg-secondary);
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
 }
 .unsupported-list .head {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--color-text-muted);
-  margin-bottom: 6px;
 }
-.unsupported-list .items {
+
+/* Settings entry point on the home page, and the settings page */
+.settings-button {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.settings-button:hover { color: var(--color-text); border-color: var(--color-accent); }
+.settings-page { max-width: 720px; margin: 0 auto; padding-top: var(--space-lg); }
+.settings-header { display: flex; align-items: center; gap: 12px; margin-bottom: var(--space-lg); }
+.settings-header h1 { font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+
+.setup-templates-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  font-size: 13px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-bottom: var(--space-sm);
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
 }
+
+/* Home: the Generate Installer Scripts bar under the three mode cards */
+.other-tools {
+  display: flex;
+  flex: none;
+  margin-top: var(--space-lg);
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: var(--space-md) var(--space-lg) !important;
+}
+.other-tools-title { font-size: var(--text-md); font-weight: 600; color: var(--color-text); }
+.other-tools-text { font-size: var(--text-base); color: var(--color-text-muted); }
+
+/* Installer scripts: the customer and site picker, with sites nested under their customer */
+.installer-count { color: var(--color-text-muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+.installer-list {
+  margin-top: var(--space-sm);
+  display: grid;
+  gap: var(--space-sm);
+  /* Use the height the window has; never shorter than a handful of rows */
+  max-height: max(240px, calc(100vh - 600px));
+  overflow-y: auto;
+  padding: var(--space-sm);
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.installer-list + .form-help { margin-top: var(--space-sm); }
+.installer-row.selected { border-color: var(--color-border); background: rgba(167, 139, 250, 0.10); }
+.installer-group { display: grid; gap: 4px; }
+.installer-group-title { padding: 4px 2px 0; font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-muted); }
+.installer-row { min-height: 36px; padding-top: 4px; padding-bottom: 4px; background: transparent; border-color: transparent; }
+.installer-customer .installer-name { font-weight: 600; }
+/* Sites are indented under their customer, joined by a guide line */
+.installer-sites { display: grid; gap: 4px; margin-left: 18px; padding-left: 14px; border-left: 2px solid var(--color-border-hover); }
+.installer-name { flex: 1; }
+.installer-kind { font-size: var(--text-xs); color: var(--color-text-muted); }
+.installer-id { min-width: 64px; text-align: right; font-size: var(--text-xs); color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.installer-empty { padding: var(--space-md); color: var(--color-text-muted); font-size: var(--text-base); }
+
+/* Page head: what this step is for, and where it sits in Setup, Configure, Run */
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-md);
+  width: 100%;
+  margin-bottom: var(--space-md);
+}
+.page-title { font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; }
+.page-subtitle { margin-top: 2px; font-size: var(--text-sm); color: var(--color-text-muted); }
+
+/* A short note inside a field label, such as "required for user creation" */
+.label-hint {
+  margin-left: 6px;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-text-muted);
+}
+
+/* Setup: connection cards share a height, with the connect button along the bottom */
+.setup-split .card { display: flex; flex-direction: column; }
+.setup-split .card > .btn-lg { margin-top: auto; }
+.setup-split .card > .form-group:last-of-type { margin-bottom: var(--space-md); }

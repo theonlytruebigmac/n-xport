@@ -46,12 +46,16 @@ export function MigrationPreflightPanel({ selectedTypes, sourceSoId, destSoId }:
     }
     if (!preflight) return null;
 
+    const hasDetails = preflight.steps.length > 0 || preflight.manualFollowUp.length > 0;
+
     return (
         <div className="preflight-panel">
-            <div className="preflight-title">Preflight summary</div>
-            {sourceSoId !== undefined && destSoId !== undefined && (
-                <div className="preflight-scope">Source SO {sourceSoId} → Destination SO {destSoId}</div>
-            )}
+            <div className="preflight-head">
+                <span className="preflight-title">Preflight summary</span>
+                {sourceSoId !== undefined && destSoId !== undefined && (
+                    <span className="preflight-scope">Source SO {sourceSoId} → Destination SO {destSoId}</span>
+                )}
+            </div>
             {preflight.warnings.map(warning => (
                 <div key={warning} className="preflight-warning">{warning}</div>
             ))}
@@ -66,21 +70,30 @@ export function MigrationPreflightPanel({ selectedTypes, sourceSoId, destSoId }:
             {preflight.steps.length > 0 && (
                 <ol className="preflight-steps">
                     {preflight.steps.map(step => (
-                        <li key={step.resource}>
+                        <li key={step.resource} title={step.details}>
                             <span className="preflight-step-label">{step.label}</span>
                             <span className={`preflight-soap preflight-soap-${step.soap}`}>{SOAP_LABELS[step.soap]}</span>
-                            <div className="preflight-step-details">{step.details}</div>
                         </li>
                     ))}
                 </ol>
             )}
-            {preflight.manualFollowUp.length > 0 && (
-                <div className="preflight-followup">
-                    <strong>Known manual follow-up</strong>
-                    <ul>
-                        {preflight.manualFollowUp.map(item => <li key={item}>{item}</li>)}
-                    </ul>
-                </div>
+            {hasDetails && (
+                <details className="preflight-more">
+                    <summary>What each step does, and manual follow-up</summary>
+                    {preflight.steps.map(step => (
+                        <div key={step.resource} className="preflight-step-details">
+                            <strong>{step.label}.</strong> {step.details}
+                        </div>
+                    ))}
+                    {preflight.manualFollowUp.length > 0 && (
+                        <div className="preflight-followup">
+                            <strong>Known manual follow-up</strong>
+                            <ul>
+                                {preflight.manualFollowUp.map(item => <li key={item}>{item}</li>)}
+                            </ul>
+                        </div>
+                    )}
+                </details>
             )}
             {preflight.usesSoap && <SoapApiNotice />}
         </div>

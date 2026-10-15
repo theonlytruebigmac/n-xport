@@ -74,6 +74,7 @@ export interface ExportOptions {
   deviceProperties: boolean;
   users: boolean;
   deviceAssets: boolean;
+  registrationTokens: boolean;
 }
 
 export interface ExportResult {
@@ -100,6 +101,8 @@ export interface ExportType {
   name: string;
   default: boolean;
   migrationComingSoon?: boolean;
+  /** Offered for export only; not shown when migrating. */
+  exportOnly?: boolean;
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -226,3 +229,16 @@ export interface LogEntry {
   level: 'info' | 'success' | 'warning' | 'error' | 'debug';
   message: string;
 }
+
+/** A customer or site that can get a Windows agent installer script. */
+export interface InstallerTarget {
+  orgUnitId: number;
+  orgUnitType: 'customer' | 'site';
+  name: string;
+  customerName: string | null;
+  /** For a site, the customer it sits under. */
+  customerId: number | null;
+}
+
+/** Stable key for a target: customers and sites can share an ID space, so include the type. */
+export const installerTargetKey = (target: InstallerTarget) => `${target.orgUnitType}:${target.orgUnitId}`;

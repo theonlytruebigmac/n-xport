@@ -1,5 +1,5 @@
 interface NewProfileModalProps {
-    appMode: 'export' | 'migrate' | 'import';
+    appMode: 'export' | 'migrate' | 'import' | 'installers';
     newProfileName: string;
     setNewProfileName: (v: string) => void;
     fqdn: string;
@@ -46,14 +46,14 @@ export function NewProfileModal({
                     <>
                         <div className="form-group" style={{ opacity: 0.8 }}>
                             <label className="form-label">Source</label>
-                            <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
+                            <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--text-base)' }}>
                                 {fqdn || <span style={{ color: 'var(--color-text-secondary)' }}>Not configured</span>}
                                 {connectedServiceOrg && <span style={{ marginLeft: 'var(--space-sm)', color: 'var(--color-text-secondary)' }}>• {connectedServiceOrg.name}</span>}
                             </div>
                         </div>
                         <div className="form-group" style={{ opacity: 0.8 }}>
                             <label className="form-label">Destination</label>
-                            <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', fontSize: '0.875rem' }}>
+                            <div style={{ padding: 'var(--space-sm)', background: 'var(--color-bg-tertiary)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--text-base)' }}>
                                 {destFqdn || <span style={{ color: 'var(--color-text-secondary)' }}>Not configured</span>}
                                 {destConnectedServiceOrg && <span style={{ marginLeft: 'var(--space-sm)', color: 'var(--color-text-secondary)' }}>• {destConnectedServiceOrg.name}</span>}
                             </div>

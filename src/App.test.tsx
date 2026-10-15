@@ -60,6 +60,7 @@ async function pickServiceOrg(user: ReturnType<typeof userEvent.setup>) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 describe('connection', () => {
@@ -105,8 +106,9 @@ describe('export', () => {
     await user.click(continueButton());
     await pickServiceOrg(user);
 
-    // Defaults are customers, sites, users. Drop Sites, add User Roles, and add JSON.
-    await user.click(await screen.findByRole('checkbox', { name: 'Sites' }));
+    // Nothing is selected to start with. Pick customers, users and user roles, and add JSON.
+    await user.click(await screen.findByRole('checkbox', { name: 'Customers' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Users' }));
     await user.click(screen.getByRole('checkbox', { name: 'User Roles' }));
     await user.click(screen.getByRole('checkbox', { name: 'json' }));
     await user.click(screen.getByRole('button', { name: /^Start export/ }));
@@ -129,6 +131,56 @@ describe('export', () => {
     expect(await screen.findByText('Export complete')).toBeInTheDocument();
   });
 
+  it('offers registration tokens for export, and sends the choice to the backend', async () => {
+    const backend = mockBackend({
+      test_connection: () => OK_CONNECTION,
+      start_export: () => exportResult(),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await connectSource(user, 'Export Data');
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    await user.click(continueButton());
+    await pickServiceOrg(user);
+
+    // Only registration tokens: nothing else needs unticking first.
+    const tokens = await screen.findByRole('checkbox', { name: 'Registration Tokens' });
+    expect(tokens).not.toBeChecked();
+    await user.click(tokens);
+    await user.click(screen.getByRole('button', { name: /^Start export/ }));
+
+    await waitFor(() => expect(backend.callsTo('start_export')).toHaveLength(1));
+    expect(backend.callsTo('start_export')[0].args).toMatchObject({
+      options: { registrationTokens: true, customers: false, sites: false, users: false },
+    });
+  });
+
+  it('starts with nothing selected and cannot start until something is', async () => {
+    mockBackend({ test_connection: () => OK_CONNECTION });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await connectSource(user, 'Export Data');
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    await user.click(continueButton());
+    await pickServiceOrg(user);
+
+    const startButton = () => screen.getByRole('button', { name: /^Start export/ });
+    await screen.findByRole('checkbox', { name: 'Customers' });
+    expect(startButton()).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByRole('checkbox', { name: 'Registration Tokens' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Device Properties' })).toBeChecked();
+    expect(startButton()).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Clear all' }));
+    expect(screen.getByRole('checkbox', { name: 'Customers' })).not.toBeChecked();
+    expect(startButton()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Select all' })).toBeInTheDocument();
+  });
+
   it('shows a partial export as partial, with its warnings', async () => {
     mockBackend({
       test_connection: () => OK_CONNECTION,
@@ -146,10 +198,82 @@ describe('export', () => {
     await waitFor(() => expect(continueButton()).toBeEnabled());
     await user.click(continueButton());
     await pickServiceOrg(user);
+    await user.click(await screen.findByRole('checkbox', { name: 'Customers' }));
     await user.click(await screen.findByRole('button', { name: /^Start export/ }));
 
     expect(await screen.findByText('Partial export')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('Failed to fetch Users for OU 12: timeout');
+  });
+});
+
+describe('while a run is going', () => {
+  it('cannot be left or disconnected until it finishes', async () => {
+    let finish: (value: unknown) => void = () => {};
+    mockBackend({
+      test_connection: () => OK_CONNECTION,
+      start_export: () => new Promise((resolve) => { finish = resolve; }),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await connectSource(user, 'Export Data');
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    await user.click(continueButton());
+    await pickServiceOrg(user);
+    await user.click(await screen.findByRole('checkbox', { name: 'Customers' }));
+    await user.click(screen.getByRole('button', { name: /^Start export/ }));
+
+    const home = await screen.findByRole('button', { name: /Home/ });
+    expect(home).toBeDisabled();
+    expect(screen.queryByTitle('Disconnect')).not.toBeInTheDocument();
+
+    finish(exportResult());
+    expect(await screen.findByText('Export complete')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Home/ })).toBeEnabled();
+  });
+});
+
+describe('output folder', () => {
+  it('defaults to a folder inside Downloads rather than a path relative to the app', async () => {
+    const backend = mockBackend({
+      test_connection: () => OK_CONNECTION,
+      'plugin:path|resolve_directory': () => '/Users/me/Downloads/',
+      start_export: () => exportResult(),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await connectSource(user, 'Export Data');
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    await user.click(continueButton());
+    await pickServiceOrg(user);
+    await user.click(await screen.findByRole('checkbox', { name: 'Customers' }));
+    await waitFor(() => expect(screen.getByDisplayValue('/Users/me/Downloads/nc_export')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /^Start export/ }));
+
+    await waitFor(() => expect(backend.callsTo('start_export')).toHaveLength(1));
+    expect(backend.callsTo('start_export')[0].args).toMatchObject({ outputDir: '/Users/me/Downloads/nc_export' });
+  });
+
+  it('remembers the folder that was typed for next time', async () => {
+    mockBackend({ test_connection: () => OK_CONNECTION });
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+
+    await connectSource(user, 'Export Data');
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    await user.click(continueButton());
+    const folder = await screen.findByDisplayValue('../nc_export');
+    await user.clear(folder);
+    await user.type(folder, '/data/exports');
+    unmount();
+
+    mockBackend({ test_connection: () => OK_CONNECTION });
+    render(<App />);
+    await connectSource(user, 'Export Data');
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    await user.click(continueButton());
+    expect(await screen.findByDisplayValue('/data/exports')).toBeInTheDocument();
   });
 });
 
@@ -167,6 +291,7 @@ describe('cancellation', () => {
     await waitFor(() => expect(continueButton()).toBeEnabled());
     await user.click(continueButton());
     await pickServiceOrg(user);
+    await user.click(await screen.findByRole('checkbox', { name: 'Customers' }));
     await user.click(await screen.findByRole('button', { name: /^Start export/ }));
 
     // The Cancel button appears once the backend reports progress.
@@ -352,6 +477,76 @@ describe('profiles', () => {
     expect(screen.queryAllByText('Connected')).toHaveLength(0);
   });
 
+  async function selectLabAndGetFields(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByText('Export Data'));
+    await user.click(await screen.findByText('Lab'));
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    return sourceInputs();
+  }
+
+  it('does not overwrite the selected profile\'s saved token when connecting to a different server', async () => {
+    const backend = profileBackend({
+      connect_with_profile: () => OK_CONNECTION,
+      test_connection: () => OK_CONNECTION,
+      save_credentials: () => ({ storage: 'keychain', warning: null }),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const { fqdn, jwt } = await selectLabAndGetFields(user);
+
+    // Another server and token typed over the profile's, then connect.
+    await user.clear(fqdn);
+    await user.type(fqdn, 'other.example.com');
+    await user.clear(jwt);
+    await user.type(jwt, 'a-different-token');
+    await user.click(screen.getByRole('button', { name: /^Reconnect/ }));
+    await waitFor(() => expect(backend.callsTo('test_connection')).toHaveLength(1));
+    expect(backend.callsTo('save_credentials')).toHaveLength(0);
+  });
+
+  it('refreshes the selected profile\'s saved token when reconnecting to its own server', async () => {
+    const backend = profileBackend({
+      connect_with_profile: () => OK_CONNECTION,
+      test_connection: () => OK_CONNECTION,
+      save_credentials: () => ({ storage: 'keychain', warning: null }),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const { jwt } = await selectLabAndGetFields(user);
+
+    await user.clear(jwt);
+    await user.type(jwt, 'a-fresh-token');
+    await user.click(screen.getByRole('button', { name: /^Reconnect/ }));
+    await waitFor(() => expect(backend.callsTo('save_credentials')).toHaveLength(1));
+    expect(backend.callsTo('save_credentials')[0].args).toMatchObject({
+      profileName: 'Lab',
+      jwt: 'a-fresh-token',
+    });
+  });
+
+  it('clears the form when the active profile is deleted', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let profilesNow: Profile[] = [migrationProfile, exportProfile];
+    profileBackend({
+      get_profiles: () => profilesNow,
+      get_active_profile: () => profilesNow.find((p) => p.name === 'Lab') ?? null,
+      connect_with_profile: () => OK_CONNECTION,
+      delete_profile: () => { profilesNow = profilesNow.filter((p) => p.name !== 'Lab'); },
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const { fqdn, jwt } = await selectLabAndGetFields(user);
+    expect(fqdn).toHaveValue('lab.example.com');
+    expect(jwt).toHaveValue('jwt-for-Lab');
+
+    const row = screen.getByText('Lab').closest('.item') as HTMLElement;
+    await user.click(within(row).getByTitle('Delete profile'));
+
+    await waitFor(() => expect(screen.queryByText('Lab')).not.toBeInTheDocument());
+    expect(sourceInputs().fqdn).toHaveValue('');
+    expect(sourceInputs().jwt).toHaveValue('');
+  });
+
   it('keeps the profile when its credentials cannot be deleted', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const backend = profileBackend({
@@ -367,5 +562,217 @@ describe('profiles', () => {
     await waitFor(() => expect(backend.callsTo('delete_credentials')).toHaveLength(1));
     expect(backend.callsTo('delete_profile')).toHaveLength(0);
     expect(screen.getByText('Lab')).toBeInTheDocument();
+  });
+});
+
+describe('settings', () => {
+  const status = { diskEnabled: false, vaultExists: false, unlocked: false, legacyEntries: 2 };
+
+  it('keeps credential storage on a settings page opened from home, not on the connection screen', async () => {
+    mockBackend({ get_credential_storage_status: () => status });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'Settings' }));
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('Credential storage')).toBeInTheDocument();
+    expect(screen.queryByText('Export Data')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Home/ }));
+    await user.click(await screen.findByText('Export Data'));
+    await screen.findByText('Profiles');
+    expect(screen.queryByLabelText('Credential storage')).not.toBeInTheDocument();
+  });
+});
+
+describe('import templates', () => {
+  it('can be downloaded from the setup page before connecting', async () => {
+    const backend = mockBackend({
+      'plugin:dialog|save': () => '/tmp/users_template.csv',
+      generate_template: (args) => String(args.path),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByText('Import Data'));
+    await user.click(await screen.findByRole('button', { name: /CSV templates/ }));
+    await user.click(await screen.findByRole('button', { name: /^Users/ }));
+
+    await waitFor(() => expect(backend.callsTo('generate_template')).toHaveLength(1));
+    expect(backend.callsTo('generate_template')[0].args).toMatchObject({
+      resourceType: 'users',
+      path: '/tmp/users_template.csv',
+    });
+    expect(backend.callsTo('test_connection')).toHaveLength(0);
+  });
+
+  it('is not offered on the export or migrate setup pages', async () => {
+    mockBackend();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByText('Export Data'));
+    await screen.findByText('Profiles');
+    expect(screen.queryByRole('button', { name: /CSV templates/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('migration data types', () => {
+  it('does not offer export-only types such as registration tokens', async () => {
+    mockBackend({ test_connection: () => OK_CONNECTION, connect_destination: () => OK_CONNECTION });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByText('Migrate Data'));
+    const type = async (index: number, host: string) => {
+      await user.type(screen.getAllByPlaceholderText('ncentral.example.com')[index], host);
+      await user.type(screen.getAllByPlaceholderText('admin@example.com')[index], 'api@example.com');
+      await user.type(screen.getAllByPlaceholderText(/^eyJ/)[index], 'secret-jwt');
+    };
+    await type(0, 'source.example.com');
+    await user.click(screen.getByRole('button', { name: /^Connect Source/ }));
+    await type(1, 'dest.example.com');
+    await user.click(screen.getByRole('button', { name: /^Connect Destination/ }));
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    await user.click(continueButton());
+
+    expect(await screen.findByRole('checkbox', { name: 'Customers' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Registration Tokens' })).not.toBeInTheDocument();
+  });
+});
+
+describe('migration service orgs', () => {
+  it('lists the destination picker from the destination server and the source picker from the source', async () => {
+    const backend = mockBackend({
+      test_connection: () => OK_CONNECTION,
+      connect_destination: () => ({ ...OK_CONNECTION, serviceOrgId: 60, serviceOrgName: 'Dest SO' }),
+      list_service_orgs: (args) =>
+        args.destination ? [{ id: 1059, name: 'Destination Org' }] : [{ id: 913, name: 'Source Org' }],
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByText('Migrate Data'));
+    const type = async (index: number, host: string) => {
+      await user.type(screen.getAllByPlaceholderText('ncentral.example.com')[index], host);
+      await user.type(screen.getAllByPlaceholderText('admin@example.com')[index], 'api@example.com');
+      await user.type(screen.getAllByPlaceholderText(/^eyJ/)[index], 'secret-jwt');
+    };
+    await type(0, 'source.example.com');
+    await user.click(screen.getByRole('button', { name: /^Connect Source/ }));
+    await type(1, 'dest.example.com');
+    await user.click(screen.getByRole('button', { name: /^Connect Destination/ }));
+
+    await waitFor(() => {
+      const flags = backend.callsTo('list_service_orgs').map((call) => Boolean(call.args.destination));
+      expect(flags).toContain(true);
+      expect(flags).toContain(false);
+    });
+  });
+});
+
+describe('generate installer scripts', () => {
+  const targets = [
+    { orgUnitId: 10, orgUnitType: 'customer', name: 'Acme', customerName: null, customerId: null },
+    { orgUnitId: 11, orgUnitType: 'site', name: 'Acme HQ', customerName: 'Acme', customerId: 10 },
+    { orgUnitId: 12, orgUnitType: 'site', name: 'Acme Depot', customerName: 'Acme', customerId: 10 },
+    { orgUnitId: 20, orgUnitType: 'customer', name: 'Zeta Co', customerName: null, customerId: null },
+    { orgUnitId: 99, orgUnitType: 'site', name: 'Stray Site', customerName: null, customerId: null },
+  ];
+
+  async function openConfigure(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole('button', { name: /Generate Installer Scripts/ }));
+    const { fqdn, username, jwt } = sourceInputs();
+    await user.type(fqdn, 'nc.example.com');
+    await user.type(username, 'api@example.com');
+    await user.type(jwt, 'secret-jwt');
+    await user.click(screen.getByRole('button', { name: /^Connect/ }));
+    await waitFor(() => expect(continueButton()).toBeEnabled());
+    await user.click(continueButton());
+    await pickServiceOrg(user);
+    await screen.findByRole('checkbox', { name: 'Acme - Acme HQ, site, ID 11' });
+  }
+
+  it('lists customers and sites, and generates a script for each one selected', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const backend = mockBackend({
+      test_connection: () => OK_CONNECTION,
+      list_installer_targets: () => targets,
+      generate_installer_scripts: () =>
+        exportResult({ message: 'Created 2 script(s)', filesCreated: ['/out/Acme_10.ps1', '/out/Acme - Acme HQ_11.ps1'] }),
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await openConfigure(user);
+
+    const generate = () => screen.getByRole('button', { name: /^Generate scripts/ });
+    expect(generate()).toBeDisabled();
+    expect(backend.callsTo('list_installer_targets')[0].args).toMatchObject({ serviceOrgId: 50 });
+
+    await user.click(screen.getByRole('checkbox', { name: 'Acme, customer, ID 10' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Acme - Acme HQ, site, ID 11' }));
+    expect(generate()).toBeEnabled();
+    await user.click(generate());
+
+    await waitFor(() => expect(backend.callsTo('generate_installer_scripts')).toHaveLength(1));
+    const sent = backend.callsTo('generate_installer_scripts')[0].args as { targets: Array<{ orgUnitId: number }> };
+    expect(sent.targets.map((t) => t.orgUnitId)).toEqual([10, 11]);
+    expect(await screen.findByText('Script generation complete')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View Scripts Folder' })).toBeInTheDocument();
+  });
+
+  it('filters the list and selects only what is shown', async () => {
+    mockBackend({ test_connection: () => OK_CONNECTION, list_installer_targets: () => targets });
+    const user = userEvent.setup();
+    render(<App />);
+    await openConfigure(user);
+
+    await user.type(screen.getByRole('textbox', { name: 'Filter customers and sites' }), 'zeta');
+    expect(screen.queryByRole('checkbox', { name: /^Acme/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(screen.getByRole('checkbox', { name: 'Zeta Co, customer, ID 20' })).toBeChecked();
+
+    await user.clear(screen.getByRole('textbox', { name: 'Filter customers and sites' }));
+    expect(screen.getByRole('checkbox', { name: 'Acme, customer, ID 10' })).not.toBeChecked();
+    expect(screen.getByText(/1 of 5 selected/)).toBeInTheDocument();
+  });
+
+  it('nests each customer\'s sites under it, and keeps the customer as the heading of a matching site', async () => {
+    mockBackend({ test_connection: () => OK_CONNECTION, list_installer_targets: () => targets });
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    await openConfigure(user);
+
+    const nested = (customerId: string) =>
+      [...container.querySelectorAll(`.installer-group:has(input[aria-label$="customer, ID ${customerId}"]) .installer-sites input`)]
+        .map((box) => box.getAttribute('aria-label'));
+    expect(nested('10')).toEqual(['Acme - Acme HQ, site, ID 11', 'Acme - Acme Depot, site, ID 12']);
+    expect(nested('20')).toEqual([]);
+    expect(screen.getByText('Sites without a listed customer')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Stray Site, site, ID 99' })).toBeInTheDocument();
+
+    // A site matching the filter keeps its customer above it, and hides the other sites.
+    await user.type(screen.getByRole('textbox', { name: 'Filter customers and sites' }), 'depot');
+    expect(screen.getByRole('checkbox', { name: 'Acme, customer, ID 10' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Acme - Acme Depot, site, ID 12' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Acme - Acme HQ, site, ID 11' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /Zeta/ })).not.toBeInTheDocument();
+  });
+
+  it('writes nothing when the sensitive-output warning is declined', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const backend = mockBackend({
+      test_connection: () => OK_CONNECTION,
+      list_installer_targets: () => targets,
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await openConfigure(user);
+
+    await user.click(screen.getByRole('checkbox', { name: 'Zeta Co, customer, ID 20' }));
+    await user.click(screen.getByRole('button', { name: /^Generate scripts/ }));
+
+    expect(window.confirm).toHaveBeenCalledOnce();
+    expect(backend.callsTo('generate_installer_scripts')).toHaveLength(0);
   });
 });

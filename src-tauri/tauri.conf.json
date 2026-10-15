@@ -14,8 +14,8 @@
       {
         "title": "N-xport Data Tool",
         "width": 1280,
-        "height": 880,
-        "minWidth": 1100,
+        "height": 960,
+        "minWidth": 1200,
         "minHeight": 700,
         "center": true,
         "resizable": true

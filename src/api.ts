@@ -7,6 +7,7 @@ import type {
     ExportType,
     ExportOptions,
     ExportResult,
+    InstallerTarget,
     MigrationOptions,
     MigrationPreflight,
     SaveCredentialsResult,
@@ -76,12 +77,13 @@ export async function disconnect(): Promise<void> {
     return invoke('disconnect');
 }
 
-export async function getServiceOrgInfo(serviceOrgId: number): Promise<{ id: number, name: string }> {
-    return invoke('get_service_org_info', { serviceOrgId });
+export async function getServiceOrgInfo(serviceOrgId: number, destination = false): Promise<{ id: number, name: string }> {
+    return invoke('get_service_org_info', { serviceOrgId, destination });
 }
 
-export async function listServiceOrgs(): Promise<ServiceOrg[]> {
-    return invoke('list_service_orgs');
+/** Service orgs on the connected server; `destination` asks the migration destination instead of the source. */
+export async function listServiceOrgs(destination = false): Promise<ServiceOrg[]> {
+    return invoke('list_service_orgs', { destination });
 }
 
 // Config commands
@@ -166,4 +168,12 @@ export async function startImport(
     passwordPolicy?: PasswordPolicy
 ): Promise<ImportResult> {
     return invoke('start_import', { resourceType, csvPath, serviceOrgId, dryRun, passwordPolicy });
+}
+
+export async function listInstallerTargets(serviceOrgId: number): Promise<InstallerTarget[]> {
+    return invoke('list_installer_targets', { serviceOrgId });
+}
+
+export async function generateInstallerScripts(outputDir: string, targets: InstallerTarget[]): Promise<ExportResult> {
+    return invoke('generate_installer_scripts', { outputDir, targets });
 }

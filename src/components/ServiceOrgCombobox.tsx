@@ -11,6 +11,8 @@ interface Props {
     placeholder?: string;
     /** Optional pre-selected name to display when the value matches a known SO. If absent the component looks it up. */
     initialName?: string;
+    /** Look the list up on the migration destination server rather than the source. */
+    destination?: boolean;
 }
 
 type FetchState =
@@ -24,7 +26,7 @@ type FetchState =
  * numeric input is always accepted as an "unverified" fallback so power users
  * can paste an ID without waiting on the discovery list.
  */
-export function ServiceOrgCombobox({ value, onChange, enabled, placeholder, initialName }: Props) {
+export function ServiceOrgCombobox({ value, onChange, enabled, placeholder, initialName, destination = false }: Props) {
     const [fetchState, setFetchState] = useState<FetchState>({ kind: 'idle' });
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState(initialName ?? '');
@@ -66,7 +68,7 @@ export function ServiceOrgCombobox({ value, onChange, enabled, placeholder, init
     const load = async () => {
         setFetchState({ kind: 'loading' });
         try {
-            const orgs = await api.listServiceOrgs();
+            const orgs = await api.listServiceOrgs(destination);
             setFetchState({ kind: 'ready', orgs });
         } catch (e) {
             setFetchState({ kind: 'error', message: String(e) });
@@ -183,13 +185,13 @@ export function ServiceOrgCombobox({ value, onChange, enabled, placeholder, init
             )}
 
             {!enabled && (
-                <div className="combo-status-row" style={{ marginTop: 6, fontSize: 11 }}>
-                    Available after the source server connects.
+                <div className="combo-status-row" style={{ marginTop: 6, fontSize: 'var(--text-xs)' }}>
+                    {destination ? 'Available after the destination server connects.' : 'Available after the source server connects.'}
                 </div>
             )}
 
             {numericValue != null && fetchState.kind === 'ready' && !matchedOrg && (
-                <div className="combo-status-row" style={{ marginTop: 6, fontSize: 11 }}>
+                <div className="combo-status-row" style={{ marginTop: 6, fontSize: 'var(--text-xs)' }}>
                     ↳ Custom ID — will be used as-is. Verify it exists on the server.
                 </div>
             )}

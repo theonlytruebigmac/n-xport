@@ -3,7 +3,7 @@ import type { ProgressUpdate, LogEntry, ImportResult, ExportResult } from '../ty
 
 interface ProgressPanelProps {
     currentStep: 'exporting' | 'complete';
-    appMode: 'export' | 'migrate' | 'import';
+    appMode: 'export' | 'migrate' | 'import' | 'installers';
     progress: ProgressUpdate | null;
     logs: LogEntry[];
     addLog: (level: LogEntry['level'], message: string) => void;
@@ -50,6 +50,9 @@ export function ProgressPanel({
     }, [logs]);
 
     const isImport = appMode === 'import';
+    const isInstallers = appMode === 'installers';
+    // Installer scripts report like an export: a result with files, warnings and errors
+    const isExportLike = appMode === 'export' || isInstallers;
     const isComplete = currentStep === 'complete';
     const isDryRun = isImport && lastImportResult?.dryRun === true;
     const showApplyStrip = isComplete && isImport && isDryRun && lastImportResult
@@ -58,15 +61,16 @@ export function ProgressPanel({
         || (isImport && isComplete && lastImportResult?.cancelled === true);
     const exportWarnings = lastExportResult?.warnings ?? [];
     const exportErrors = lastExportResult?.errors ?? [];
+    const noun = isInstallers ? 'Script generation' : 'Export';
     const exportStatus = !lastExportResult
-        ? 'Export failed'
+        ? `${noun} failed`
         : lastExportResult.cancelled
         ? 'Cancelled'
         : lastExportResult.success === false
-            ? 'Export failed'
+            ? `${noun} failed`
             : lastExportResult.partial
-                ? 'Partial export'
-                : 'Export complete';
+                ? (isInstallers ? 'Partly complete' : 'Partial export')
+                : `${noun} complete`;
 
     const chips: ChipDef[] | null = lastImportResult
         ? [
@@ -85,19 +89,20 @@ export function ProgressPanel({
             <div className="card-header">
                 <h2 className="card-title">
                     {currentStep === 'exporting'
-                        ? (appMode === 'migrate' ? 'Migrating…' : isImport ? (isDryRun ? 'Dry-running…' : 'Importing…') : 'Exporting…')
+                        ? (appMode === 'migrate' ? 'Migrating…' : isImport ? (isDryRun ? 'Dry-running…' : 'Importing…') : isInstallers ? 'Generating…' : 'Exporting…')
                         : isCancelled ? 'Cancelled'
-                            : appMode === 'export' ? exportStatus
+                            : isExportLike ? exportStatus
                                 : (isImport && isDryRun ? 'Dry-run complete' : 'Complete')}
                 </h2>
             </div>
 
-            {isComplete && appMode === 'export' && lastExportResult && (
+            {isComplete && isExportLike && lastExportResult && (
                 <div
                     role={lastExportResult.partial || !lastExportResult.success ? 'alert' : 'status'}
                     style={{
                         marginBottom: 'var(--space-md)',
                         padding: 'var(--space-md)',
+                        fontSize: 'var(--text-base)',
                         border: `1px solid ${lastExportResult.partial || !lastExportResult.success ? 'var(--color-warning)' : 'var(--color-border)'}`,
                         borderRadius: 'var(--radius-md)',
                     }}
@@ -161,7 +166,7 @@ export function ProgressPanel({
                 <div className="logs-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>Activity Log</span>
                     <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', fontSize: '0.75rem', cursor: 'pointer' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', fontSize: 'var(--text-xs)', cursor: 'pointer' }}>
                             <input
                                 type="checkbox"
                                 checked={verboseLogging}
@@ -172,7 +177,7 @@ export function ProgressPanel({
                         </label>
                         <button
                             className="btn btn-ghost"
-                            style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                            style={{ padding: '4px 8px', fontSize: 'var(--text-xs)' }}
                             onClick={async () => {
                                 try {
                                     const { save } = await import('@tauri-apps/plugin-dialog');
@@ -229,13 +234,13 @@ export function ProgressPanel({
 
             {currentStep === 'complete' && (
                 <div style={{ display: 'flex', gap: 'var(--space-md)', marginTop: 'var(--space-xl)' }}>
-                    {appMode === 'export' && (
+                    {isExportLike && (
                         <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={onOpenOutput}>
-                            View Export Folder
+                            {isInstallers ? 'View Scripts Folder' : 'View Export Folder'}
                         </button>
                     )}
                     <button className="btn btn-secondary btn-lg" style={{ flex: 1 }} onClick={onNewExport}>
-                        {appMode === 'migrate' ? 'New Migration' : isImport ? (isDryRun ? 'Edit configuration' : 'Run another import') : 'Start New Export'}
+                        {appMode === 'migrate' ? 'New Migration' : isImport ? (isDryRun ? 'Edit configuration' : 'Run another import') : isInstallers ? 'Generate More' : 'Start New Export'}
                     </button>
                 </div>
             )}

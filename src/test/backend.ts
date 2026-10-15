@@ -16,6 +16,7 @@ export const EXPORT_TYPES: ExportType[] = [
   { id: 'access_groups', name: 'Access Groups', default: false },
   { id: 'org_properties', name: 'Organization Properties', default: false },
   { id: 'device_properties', name: 'Device Properties', default: false },
+  { id: 'registration_tokens', name: 'Registration Tokens', default: false, exportOnly: true },
 ];
 
 export const IMPORT_TYPES: ImportType[] = [
