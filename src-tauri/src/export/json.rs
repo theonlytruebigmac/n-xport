@@ -1,9 +1,9 @@
 //! JSON export functionality
 
+use serde::Serialize;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
-use serde::Serialize;
 
 use crate::error::{AppError, Result};
 
@@ -15,7 +15,7 @@ where
 {
     let path = path.as_ref();
     let count = data.len();
-    
+
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -38,7 +38,7 @@ where
 {
     let path = path.as_ref();
     let count = data.len();
-    
+
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -71,8 +71,14 @@ mod tests {
         let path = dir.path().join("test.json");
 
         let data = vec![
-            TestData { id: 1, name: "Test 1".into() },
-            TestData { id: 2, name: "Test 2".into() },
+            TestData {
+                id: 1,
+                name: "Test 1".into(),
+            },
+            TestData {
+                id: 2,
+                name: "Test 2".into(),
+            },
         ];
 
         let count = export_to_json(&data, &path).unwrap();

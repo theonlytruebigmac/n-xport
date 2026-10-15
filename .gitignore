@@ -9,8 +9,9 @@ dist-ssr/
 src-tauri/target/
 src-tauri/gen/schemas/
 
-# seed demo data
+# seed demo data (anything local in scripts/ stays untracked, except the release helper)
 /scripts/*
+!/scripts/bump-version.sh
 
 # Logs
 logs/
@@ -33,10 +34,6 @@ lerna-debug.log*
 !.vscode/settings.json
 .idea/
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
 *.sw?
 *~
 
@@ -61,10 +58,24 @@ Desktop.ini
 *.p12
 *.pfx
 
+# API tokens and saved credentials. The opt-in live tests read a JWT from a file; keep such
+# files outside the repository, and these patterns are a backstop if one lands inside it.
+*.jwt
+*.token
+credentials.json
+credentials.vault.json
+
 # Temporary files
 *.tmp
 *.temp
 .cache/
 
+# Test coverage and rustfmt backups
+coverage/
+*.rs.bk
+
 # Sensitive Data Export
 nc_export/
+
+# Temp Folder
+temp/

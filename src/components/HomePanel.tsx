@@ -3,9 +3,11 @@ interface HomePanelProps {
     onSelectExport: () => void;
     onSelectMigrate: () => void;
     onSelectImport: () => void;
+    onOpenSettings: () => void;
+    onSelectInstallers: () => void;
 }
 
-export function HomePanel({ appVersion, onSelectExport, onSelectMigrate, onSelectImport }: HomePanelProps) {
+export function HomePanel({ appVersion, onSelectExport, onSelectMigrate, onSelectImport, onOpenSettings, onSelectInstallers }: HomePanelProps) {
     return (
         <div className="centered-dashboard fade-in" style={{
             maxWidth: 1000,
@@ -13,18 +15,31 @@ export function HomePanel({ appVersion, onSelectExport, onSelectMigrate, onSelec
             paddingTop: 'var(--space-lg)',
             display: 'flex',
             flexDirection: 'column',
+            justifyContent: 'center',
             height: 'calc(100vh - 120px)'
         }}>
+            <button
+                className="settings-button"
+                onClick={onOpenSettings}
+                aria-label="Settings"
+                title="Settings"
+            >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+            </button>
             <div style={{ textAlign: 'center', marginBottom: 'var(--space-xl)' }}>
                 <h1 style={{
-                    fontSize: '2rem',
+                    fontSize: 'var(--text-hero)',
                     fontWeight: 600,
                     marginBottom: 'var(--space-xs)',
                     color: 'var(--color-text)'
                 }}>
                     <span style={{ color: 'var(--color-accent)' }}>N-xport</span> Data Tool
                 </h1>
-                <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9375rem' }}>
+                <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-base)' }}>
                     Export, import, or migrate data between N-Central servers
                 </p>
             </div>
@@ -34,7 +49,9 @@ export function HomePanel({ appVersion, onSelectExport, onSelectMigrate, onSelec
                 gridTemplateColumns: 'repeat(3, 1fr)',
                 gap: 'var(--space-lg)',
                 flex: 1,
-                minHeight: 280
+                minHeight: 200,
+                // In a tall window the cards stop growing, so they never become empty slabs
+                maxHeight: 420
             }}>
                 {/* Export Card — recommended */}
                 <ModeCard
@@ -62,11 +79,22 @@ export function HomePanel({ appVersion, onSelectExport, onSelectMigrate, onSelec
                 />
             </div>
 
+            <div
+                className="card mode-card other-tools"
+                role="button"
+                tabIndex={0}
+                onClick={onSelectInstallers}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectInstallers(); } }}
+            >
+                <span className="other-tools-title">Generate Installer Scripts</span>
+                <span className="other-tools-text">Create agent install scripts for customers and sites</span>
+            </div>
+
             <div style={{
                 textAlign: 'center',
                 marginTop: 'var(--space-lg)',
                 color: 'var(--color-text-muted)',
-                fontSize: '0.75rem',
+                fontSize: 'var(--text-xs)',
                 opacity: 0.5
             }}>
                 v{appVersion}
@@ -109,14 +137,14 @@ function ModeCard({ title, description, accentColor, onClick, recommended }: {
                 textAlign: 'center'
             }}>
                 <h2 style={{
-                    fontSize: '1.5rem',
+                    fontSize: 'var(--text-lg)',
                     fontWeight: 600,
                     marginBottom: 'var(--space-sm)',
                     color: 'var(--color-text)'
                 }}>{title}</h2>
                 <p style={{
                     color: 'var(--color-text-muted)',
-                    fontSize: '0.875rem',
+                    fontSize: 'var(--text-base)',
                     lineHeight: 1.5,
                     maxWidth: 240
                 }}>

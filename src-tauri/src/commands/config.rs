@@ -41,7 +41,9 @@ pub async fn delete_profile(name: String) -> std::result::Result<(), String> {
 #[tauri::command]
 pub async fn set_active_profile(name: String) -> std::result::Result<(), String> {
     let mut settings = Settings::load().map_err(|e| e.to_string())?;
-    settings.set_active_profile(&name).map_err(|e| e.to_string())?;
+    settings
+        .set_active_profile(&name)
+        .map_err(|e| e.to_string())?;
     settings.save().map_err(|e| e.to_string())
 }
 

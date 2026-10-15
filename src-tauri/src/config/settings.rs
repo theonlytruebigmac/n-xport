@@ -9,15 +9,11 @@ use crate::error::{AppError, Result};
 /// Profile type: export (single connection) or migration (dual connection)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ProfileType {
+    #[default]
     Export,
     Migration,
-}
-
-impl Default for ProfileType {
-    fn default() -> Self {
-        ProfileType::Export
-    }
 }
 
 /// A single connection configuration
@@ -91,7 +87,7 @@ impl Profile {
 
     /// Get the base URL for API requests (source)
     pub fn base_url(&self) -> String {
-        format!("https://{}", self.source.fqdn)
+        crate::commands::connection::server_url(&self.source.fqdn)
     }
 }
 
@@ -141,6 +137,10 @@ pub struct Settings {
     /// sessions; per-instance tweaks are saved here so the UI can recall them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password_policy: Option<PasswordPolicy>,
+    /// The user opted in to keeping credentials in a passphrase-encrypted file when the OS
+    /// keychain is unavailable. Off by default: without it, nothing is written to disk.
+    #[serde(default)]
+    pub allow_disk_credentials: bool,
 }
 
 /// Window state for persistence
@@ -233,7 +233,7 @@ impl Settings {
             .map(|n| n == name)
             .unwrap_or(false)
         {
-            self.active_profile = self.profiles.first().map(|p| p.name.clone());
+            self.active_profile = None;
         }
     }
 
@@ -244,5 +244,60 @@ impl Settings {
         }
         self.active_profile = Some(name.to_string());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_profile_url_is_clean_whatever_was_saved_as_the_server() {
+        for saved in [
+            "nc.example.com",
+            "https://nc.example.com/",
+            " NC.example.com ",
+        ] {
+            let profile = Profile::new_export("Lab", saved);
+            assert_eq!(
+                profile.base_url().to_ascii_lowercase(),
+                "https://nc.example.com"
+            );
+        }
+    }
+
+    #[test]
+    fn deleting_the_active_profile_leaves_none_active() {
+        let mut settings = Settings::default();
+        settings.add_profile(Profile::new_export("First", "first.example.com"));
+        settings.add_profile(Profile::new_export("Second", "second.example.com"));
+        settings.set_active_profile("Second").unwrap();
+
+        settings.delete_profile("Second");
+
+        // The app must not quietly pick another server for the next launch.
+        assert!(settings.get_active_profile().is_none());
+        assert_eq!(settings.profiles.len(), 1);
+    }
+
+    #[test]
+    fn deleting_another_profile_keeps_the_active_one() {
+        let mut settings = Settings::default();
+        settings.add_profile(Profile::new_export("First", "first.example.com"));
+        settings.add_profile(Profile::new_export("Second", "second.example.com"));
+        settings.set_active_profile("First").unwrap();
+
+        settings.delete_profile("Second");
+
+        assert_eq!(settings.get_active_profile().unwrap().name, "First");
+    }
+
+    #[test]
+    fn saving_a_profile_with_an_existing_name_replaces_it() {
+        let mut settings = Settings::default();
+        settings.add_profile(Profile::new_export("Lab", "old.example.com"));
+        settings.add_profile(Profile::new_export("Lab", "new.example.com"));
+        assert_eq!(settings.profiles.len(), 1);
+        assert_eq!(settings.profiles[0].source.fqdn, "new.example.com");
     }
 }

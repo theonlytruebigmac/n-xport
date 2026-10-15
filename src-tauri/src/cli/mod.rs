@@ -4,15 +4,16 @@
 
 pub mod runner;
 
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
-use clap::{Parser, Subcommand, Args};
 
 /// N-Central Data Export Tool - Export data from N-Central via REST API
 #[derive(Parser, Debug)]
 #[command(name = "nc-export")]
-#[command(author = "FrazierSystems")]
+#[command(author = "theonlytruebigmac")]
 #[command(version)]
 #[command(about = "Export N-Central data via REST API", long_about = None)]
+#[derive(Default)]
 pub struct Cli {
     /// Server FQDN (e.g., ncentral.example.com)
     #[arg(short, long, global = true)]
@@ -34,10 +35,10 @@ pub struct Cli {
 pub enum Commands {
     /// Export data from N-Central
     Export(ExportArgs),
-    
+
     /// Manage connection profiles
     Profile(ProfileArgs),
-    
+
     /// Test connection to N-Central server
     Test(TestArgs),
 }
@@ -101,8 +102,14 @@ pub struct ExportArgs {
 impl ExportArgs {
     /// Check if any export type is explicitly selected
     pub fn has_explicit_selection(&self) -> bool {
-        self.service_orgs || self.customers || self.sites || self.devices ||
-        self.access_groups || self.user_roles || self.org_properties || self.device_properties
+        self.service_orgs
+            || self.customers
+            || self.sites
+            || self.devices
+            || self.access_groups
+            || self.user_roles
+            || self.org_properties
+            || self.device_properties
     }
 
     /// Returns true for all types if --all is set or no explicit selection
@@ -140,7 +147,7 @@ pub struct ProfileArgs {
 pub enum ProfileCommands {
     /// List all saved profiles
     List,
-    
+
     /// Add or update a profile
     Add {
         /// Profile name
@@ -152,24 +159,40 @@ pub enum ProfileCommands {
         #[arg(long)]
         service_org: Option<i64>,
     },
-    
+
     /// Delete a profile
     Delete {
         /// Profile name to delete
         name: String,
     },
-    
+
     /// Set the active profile
     Use {
         /// Profile name to activate
         name: String,
     },
-    
+
     /// Store JWT credentials for a profile (reads from stdin)
     SetCredentials {
         /// Profile name
         name: String,
     },
+
+    /// Keep credentials in a passphrase-encrypted file when no OS keychain is available.
+    /// Off by default: without it, nothing is written to disk. Prompts for the passphrase
+    /// (at least 12 characters; there is no recovery if it is forgotten).
+    EnableEncryptedStorage,
+
+    /// Turn encrypted file storage off. Add --delete-file to remove the file as well
+    /// (this is also how a forgotten passphrase is reset: stored credentials are lost).
+    DisableEncryptedStorage {
+        /// Also delete the encrypted file
+        #[arg(long)]
+        delete_file: bool,
+    },
+
+    /// Show where credentials are kept and whether encrypted file storage is on
+    StorageStatus,
 }
 
 /// Arguments for connection testing
@@ -178,15 +201,4 @@ pub struct TestArgs {
     /// JWT token for authentication (or set NC_JWT env var)
     #[arg(short, long, env = "NC_JWT")]
     pub jwt: Option<String>,
-}
-
-impl Default for Cli {
-    fn default() -> Self {
-        Self {
-            server: None,
-            profile: None,
-            verbose: false,
-            command: None,
-        }
-    }
 }

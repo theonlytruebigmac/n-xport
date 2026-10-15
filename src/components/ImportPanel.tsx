@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { useEffect, useState } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 import * as api from '../api';
 import type { ImportType, LogEntry, PasswordPolicy } from '../types';
 import { DEFAULT_PASSWORD_POLICY } from '../types';
 import { ServiceOrgCombobox } from './ServiceOrgCombobox';
+import { PropertyPrerequisitesNotice } from './PropertyPrerequisitesNotice';
+import { SoapApiNotice } from './SoapApiNotice';
+import { ImportTemplatesMenu } from './ImportTemplatesMenu';
 
 interface ImportPanelProps {
     serviceOrgId: string;
@@ -46,25 +49,12 @@ export function ImportPanel({
     connectedServiceOrgName,
 }: ImportPanelProps) {
     const [importTypes, setImportTypes] = useState<ImportType[]>([]);
-    const [templatesOpen, setTemplatesOpen] = useState(false);
-    const templatesMenuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         api.getImportTypes()
             .then(setImportTypes)
             .catch((e) => addLog('error', `Failed to load import types: ${e}`));
     }, [addLog]);
-
-    useEffect(() => {
-        if (!templatesOpen) return;
-        const onDocClick = (e: MouseEvent) => {
-            if (templatesMenuRef.current && !templatesMenuRef.current.contains(e.target as Node)) {
-                setTemplatesOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', onDocClick);
-        return () => document.removeEventListener('mousedown', onDocClick);
-    }, [templatesOpen]);
 
     const handleBrowseCsv = async () => {
         const selected = await open({
@@ -76,33 +66,23 @@ export function ImportPanel({
         if (typeof selected === 'string') setCsvPath(selected);
     };
 
-    const handleDownloadTemplate = async (resourceId: string, resourceName: string) => {
-        setTemplatesOpen(false);
-        try {
-            const path = await save({
-                title: `Save ${resourceName} template`,
-                defaultPath: `${resourceId}_template.csv`,
-                filters: [{ name: 'CSV', extensions: ['csv'] }],
-            });
-            if (!path) return;
-            const written = await api.generateTemplate(resourceId, path);
-            addLog('success', `Template saved to ${written}`);
-        } catch (e) {
-            addLog('error', `Failed to save template: ${e}`);
-        }
-    };
-
     const supportedTypes = importTypes.filter(t => t.supported);
     const unsupportedTypes = importTypes.filter(t => !t.supported);
     const fileLabel = csvPath ? csvPath.split(/[\\/]/).pop() : null;
 
     return (
         <div className="card card-compact fade-in">
-            <div className="card-header">
-                <h2 className="card-title">Configure <span className="header-accent">Import</span></h2>
-            </div>
-
             <div className="grid-2">
+                <div className="form-group">
+                    <label className="form-label">Target Service Org</label>
+                    <ServiceOrgCombobox
+                        value={serviceOrgId}
+                        onChange={setServiceOrgId}
+                        enabled={true}
+                        initialName={connectedServiceOrgName}
+                        placeholder="Select or type a service org…"
+                    />
+                </div>
                 <div className="form-group">
                     <label className="form-label">CSV File</label>
                     <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
@@ -116,41 +96,12 @@ export function ImportPanel({
                         <button className="btn btn-secondary" onClick={handleBrowseCsv}>Browse</button>
                     </div>
                 </div>
-                <div className="form-group">
-                    <label className="form-label">Target Service Org</label>
-                    <ServiceOrgCombobox
-                        value={serviceOrgId}
-                        onChange={setServiceOrgId}
-                        enabled={true}
-                        initialName={connectedServiceOrgName}
-                        placeholder="Select or type a service org…"
-                    />
-                </div>
             </div>
 
             <div className="form-group">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <label className="form-label" style={{ marginBottom: 0 }}>Resource to Import</label>
-                    <div className="templates-menu" ref={templatesMenuRef}>
-                        <button className="templates-trigger" onClick={() => setTemplatesOpen(o => !o)}>
-                            <span>↓</span> CSV templates <span className="caret">▾</span>
-                        </button>
-                        {templatesOpen && (
-                            <div className="templates-pop">
-                                <div className="templates-pop-head">Download a starting CSV</div>
-                                {supportedTypes.map(t => (
-                                    <button
-                                        key={t.id}
-                                        className="templates-pop-item"
-                                        onClick={() => handleDownloadTemplate(t.id, t.name)}
-                                    >
-                                        <span>{t.name}</span>
-                                        <span className="arrow">↓</span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                    <ImportTemplatesMenu addLog={addLog} />
                 </div>
 
                 <div className="data-types-grid">
@@ -171,15 +122,19 @@ export function ImportPanel({
 
                 {unsupportedTypes.length > 0 && (
                     <div className="unsupported-list">
-                        <div className="head">Not yet supported for import</div>
-                        <div className="items">
-                            {unsupportedTypes.map(t => (
-                                <span key={t.id}>· {t.name}</span>
-                            ))}
-                        </div>
+                        <span className="head">Not yet supported for import:</span>{' '}
+                        <span className="items">
+                            {unsupportedTypes.map(t => t.name).join(', ')}
+                        </span>
                     </div>
                 )}
             </div>
+
+            {['customers', 'access_groups', 'user_roles', 'users'].includes(selectedResource)
+                && <SoapApiNotice />}
+
+            {(selectedResource === 'org_properties' || selectedResource === 'device_properties')
+                && <PropertyPrerequisitesNotice resource={selectedResource} />}
 
             {selectedResource === 'users' && (
                 <div className="form-group password-policy">

@@ -28,6 +28,14 @@ pub struct CustomerImportRow {
     #[serde(default)]
     pub contact_phone: Option<String>,
     #[serde(default)]
+    pub contact_phone_ext: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub contact_title: Option<String>,
+    #[serde(default)]
+    pub contact_department: Option<String>,
+    #[serde(default)]
     pub street1: Option<String>,
     #[serde(default)]
     pub street2: Option<String>,
@@ -59,6 +67,14 @@ pub struct SiteImportRow {
     pub contact_email: Option<String>,
     #[serde(default)]
     pub contact_phone: Option<String>,
+    #[serde(default)]
+    pub contact_phone_ext: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub contact_title: Option<String>,
+    #[serde(default)]
+    pub contact_department: Option<String>,
     #[serde(default)]
     pub street1: Option<String>,
     #[serde(default)]
@@ -107,7 +123,7 @@ pub struct UserRoleImportRow {
     /// Optional customer name where this role lives. Empty/missing = SO level.
     #[serde(default)]
     pub customer_name: Option<String>,
-    /// Semicolon-separated list of permission names. Resolved against rolePermissionIds.csv.
+    /// Semicolon-separated list of permission names. Resolved against the bundled `data/rolePermissionIds.csv`.
     #[serde(default)]
     pub permissions: Option<String>,
 }
@@ -135,7 +151,10 @@ pub struct UserImportRow {
     /// Semicolon-separated list of access group names to assign.
     #[serde(default)]
     pub access_group_names: Option<String>,
-    #[serde(default = "default_true", deserialize_with = "deserialize_lenient_bool")]
+    #[serde(
+        default = "default_true",
+        deserialize_with = "deserialize_lenient_bool"
+    )]
     pub is_enabled: bool,
     #[serde(default)]
     pub phone: Option<String>,
@@ -143,6 +162,39 @@ pub struct UserImportRow {
     pub department: Option<String>,
     #[serde(default)]
     pub location: Option<String>,
+}
+
+/// CSV shape for organization custom-property value updates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgPropertyImportRow {
+    /// Optional customer name. Empty means the connected service organization.
+    #[serde(default)]
+    pub customer_name: Option<String>,
+    /// Optional site name, required with customerName when targeting a site.
+    #[serde(default)]
+    pub site_name: Option<String>,
+    /// Existing custom-property definition name on the target org unit.
+    pub property_name: String,
+    /// New value. An empty cell intentionally clears the value.
+    pub value: String,
+}
+
+/// CSV shape for device custom-property value updates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevicePropertyImportRow {
+    /// Customer scope for the device.
+    pub customer_name: String,
+    /// Optional site scope. Empty targets devices directly under the customer.
+    #[serde(default)]
+    pub site_name: Option<String>,
+    /// Existing device long name within the specified org-unit scope.
+    pub device_name: String,
+    /// Existing custom-property definition name on the target device.
+    pub property_name: String,
+    /// New value. An empty cell intentionally clears the value.
+    pub value: String,
 }
 
 fn default_true() -> bool {
@@ -181,6 +233,8 @@ pub enum ImportResource {
     AccessGroups,
     UserRoles,
     Users,
+    OrgProperties,
+    DeviceProperties,
 }
 
 impl ImportResource {
@@ -191,6 +245,8 @@ impl ImportResource {
             "access_groups" => Some(Self::AccessGroups),
             "user_roles" => Some(Self::UserRoles),
             "users" => Some(Self::Users),
+            "org_properties" => Some(Self::OrgProperties),
+            "device_properties" => Some(Self::DeviceProperties),
             _ => None,
         }
     }
@@ -213,6 +269,10 @@ pub fn write_template(resource: ImportResource, path: &Path) -> Result<()> {
                 contact_last_name: Some("Doe".into()),
                 contact_email: Some("jane@acme.example".into()),
                 contact_phone: Some("555-0100".into()),
+                contact_phone_ext: None,
+                phone: Some("555-0100".into()),
+                contact_title: Some("IT Manager".into()),
+                contact_department: Some("IT".into()),
                 street1: Some("123 Main St".into()),
                 street2: None,
                 city: Some("Springfield".into()),
@@ -230,6 +290,10 @@ pub fn write_template(resource: ImportResource, path: &Path) -> Result<()> {
                 contact_last_name: Some("Doe".into()),
                 contact_email: Some("jane@acme.example".into()),
                 contact_phone: Some("555-0100".into()),
+                contact_phone_ext: None,
+                phone: Some("555-0100".into()),
+                contact_title: Some("IT Manager".into()),
+                contact_department: Some("IT".into()),
                 street1: Some("123 Main St".into()),
                 street2: None,
                 city: Some("Springfield".into()),
@@ -270,6 +334,23 @@ pub fn write_template(resource: ImportResource, path: &Path) -> Result<()> {
                 location: Some("HQ".into()),
             })
             .map_err(|e| AppError::Export(format!("CSV write error: {}", e)))?,
+        ImportResource::OrgProperties => writer
+            .serialize(OrgPropertyImportRow {
+                customer_name: Some("Acme Co".into()),
+                site_name: Some("Acme HQ".into()),
+                property_name: "Department".into(),
+                value: "IT".into(),
+            })
+            .map_err(|e| AppError::Export(format!("CSV write error: {}", e)))?,
+        ImportResource::DeviceProperties => writer
+            .serialize(DevicePropertyImportRow {
+                customer_name: "Acme Co".into(),
+                site_name: Some("Acme HQ".into()),
+                device_name: "ACME-WS01".into(),
+                property_name: "Asset Tag".into(),
+                value: "ASSET-001".into(),
+            })
+            .map_err(|e| AppError::Export(format!("CSV write error: {}", e)))?,
     }
 
     writer
@@ -283,12 +364,15 @@ pub fn read_rows<T>(path: &Path) -> Result<Vec<T>>
 where
     T: serde::de::DeserializeOwned,
 {
-    let file = std::fs::File::open(path)
-        .map_err(|e| AppError::Export(format!("Failed to open CSV: {}", e)))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| AppError::Export(format!("Failed to open CSV: {}", e)))?;
+    // Excel's "CSV UTF-8" adds a byte order mark. Left in place it becomes part of the first
+    // header name, so that column would never match.
+    let content = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
     let mut reader = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
         .has_headers(true)
-        .from_reader(file);
+        .from_reader(content);
 
     let mut rows = Vec::new();
     for (i, result) in reader.deserialize::<T>().enumerate() {
@@ -309,12 +393,68 @@ pub struct RowOutcome {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RowStatus {
     Created,
+    Updated,
     Skipped,
     Error,
-    /// Dry-run "would be created"
+    /// Dry-run "would be applied"
     Planned,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        read_rows, write_template, DevicePropertyImportRow, ImportResource, OrgPropertyImportRow,
+    };
+
+    #[test]
+    fn a_csv_saved_by_excel_with_a_byte_order_mark_still_reads_its_first_column() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Row {
+            customer_name: String,
+            #[serde(default)]
+            site_name: Option<String>,
+        }
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("with-bom.csv");
+        std::fs::write(&path, b"\xEF\xBB\xBFcustomerName,siteName\r\nAcme,HQ\r\n").unwrap();
+        let rows: Vec<Row> = read_rows(&path).expect("csv with BOM parses");
+        assert_eq!(rows[0].customer_name, "Acme");
+        assert_eq!(rows[0].site_name.as_deref(), Some("HQ"));
+
+        let plain = directory.path().join("plain.csv");
+        std::fs::write(&plain, b"customerName,siteName\nAcme,HQ\n").unwrap();
+        assert_eq!(read_rows::<Row>(&plain).unwrap()[0].customer_name, "Acme");
+    }
+
+    #[test]
+    fn property_import_templates_are_registered_and_parseable() {
+        assert_eq!(
+            ImportResource::from_id("org_properties"),
+            Some(ImportResource::OrgProperties)
+        );
+        assert_eq!(
+            ImportResource::from_id("device_properties"),
+            Some(ImportResource::DeviceProperties)
+        );
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let org_path = directory.path().join("org-properties.csv");
+        write_template(ImportResource::OrgProperties, &org_path).expect("org template");
+        let org_rows: Vec<OrgPropertyImportRow> =
+            read_rows(&org_path).expect("org property template parses");
+        assert_eq!(org_rows[0].customer_name.as_deref(), Some("Acme Co"));
+        assert_eq!(org_rows[0].property_name, "Department");
+
+        let device_path = directory.path().join("device-properties.csv");
+        write_template(ImportResource::DeviceProperties, &device_path).expect("device template");
+        let device_rows: Vec<DevicePropertyImportRow> =
+            read_rows(&device_path).expect("device property template parses");
+        assert_eq!(device_rows[0].device_name, "ACME-WS01");
+        assert_eq!(device_rows[0].property_name, "Asset Tag");
+    }
 }

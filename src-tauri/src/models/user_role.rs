@@ -8,8 +8,11 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub struct UserRoleExtra {
     /// Whether the role is read-only (system role)
-    #[serde(default)]
-    pub readonly: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::models::common::option_bool_or_string"
+    )]
+    pub readonly: Option<bool>,
     /// Permission names assigned to this role
     #[serde(default)]
     pub permissions: Vec<String>,
@@ -17,8 +20,13 @@ pub struct UserRoleExtra {
     #[serde(default)]
     pub usernames: Vec<String>,
     /// Whether the role can be cloned
-    #[serde(default)]
-    pub cloneable: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::models::common::option_bool_or_string"
+    )]
+    pub cloneable: Option<bool>,
+    #[serde(flatten)]
+    pub other: HashMap<String, serde_json::Value>,
 }
 
 /// User Role from /api/org-units/{id}/user-roles
@@ -26,12 +34,19 @@ pub struct UserRoleExtra {
 #[serde(rename_all = "camelCase")]
 pub struct UserRole {
     /// The actual field name from N-Central is "roleId"
-    #[serde(alias = "userRoleId", deserialize_with = "crate::models::common::string_or_i64")]
+    #[serde(
+        alias = "userRoleId",
+        deserialize_with = "crate::models::common::string_or_i64"
+    )]
     pub role_id: i64,
     #[serde(default)]
     pub role_name: Option<String>,
     #[serde(default)]
     pub role_description: Option<String>,
+    #[serde(default)]
+    pub org_unit_id: Option<i64>,
+    #[serde(default)]
+    pub user_ids: Option<Vec<i64>>,
     /// Extra fields containing permissions, usernames, etc.
     #[serde(default, rename = "_extra")]
     pub extra: Option<UserRoleExtra>,
@@ -64,34 +79,50 @@ pub struct UserRoleCsvRow {
     pub role_id: i64,
     pub role_name: Option<String>,
     pub role_description: Option<String>,
-    pub readonly: Option<String>,
-    pub cloneable: Option<String>,
+    pub org_unit_id: Option<i64>,
+    pub readonly: Option<bool>,
+    pub cloneable: Option<bool>,
     pub permissions: String,
     pub usernames: String,
+    pub user_ids: String,
 }
+
+#[cfg(test)]
+mod tests;
 
 impl From<&UserRole> for UserRoleCsvRow {
     fn from(ur: &UserRole) -> Self {
         let permissions = ur.get_permissions().join(";");
         let usernames = ur.get_usernames().join(";");
+        let user_ids = ur
+            .user_ids
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(";");
         let (readonly, cloneable) = match &ur.extra {
-            Some(e) => (e.readonly.clone(), e.cloneable.clone()),
+            Some(e) => (e.readonly, e.cloneable),
             None => (None, None),
         };
         Self {
             role_id: ur.role_id,
             role_name: ur.role_name.clone(),
             role_description: ur.role_description.clone(),
+            org_unit_id: ur.org_unit_id,
             readonly,
             cloneable,
             permissions,
             usernames,
+            user_ids,
         }
     }
 }
 
 /// Mapping of permission name to permission ID
-/// Loaded from rolePermissionIds.csv
+/// Loaded from `data/rolePermissionIds.csv`
+#[derive(Default)]
 pub struct PermissionLookup {
     name_to_id: HashMap<String, i64>,
 }
@@ -102,6 +133,12 @@ impl PermissionLookup {
         Self {
             name_to_id: HashMap::new(),
         }
+    }
+
+    /// The permission list bundled into the app (`data/rolePermissionIds.csv`). This is the
+    /// only copy; roles created by import and migration resolve permission names against it.
+    pub fn bundled() -> Self {
+        Self::from_csv(include_str!("../../data/rolePermissionIds.csv"))
     }
 
     /// Load permission mappings from CSV content

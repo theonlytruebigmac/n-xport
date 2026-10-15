@@ -7,9 +7,15 @@ import type {
     ExportType,
     ExportOptions,
     ExportResult,
+    InstallerTarget,
     MigrationOptions,
+    MigrationPreflight,
+    SaveCredentialsResult,
+    CredentialStorageStatus,
+    LegacyMigration,
     ImportType,
     ImportResult,
+    MigrationResult,
     PasswordPolicy,
     ServiceOrg
 } from './types';
@@ -27,7 +33,7 @@ export async function connectWithProfile(profileName: string, fqdn: string, user
     return invoke('connect_with_profile', { profileName, fqdn, username });
 }
 
-export async function saveCredentials(profileName: string, jwt: string): Promise<void> {
+export async function saveCredentials(profileName: string, jwt: string): Promise<SaveCredentialsResult> {
     return invoke('save_credentials', { profileName, jwt });
 }
 
@@ -43,6 +49,26 @@ export async function deleteCredentials(profileName: string): Promise<void> {
     return invoke('delete_credentials', { profileName });
 }
 
+export async function getCredentialStorageStatus(): Promise<CredentialStorageStatus> {
+    return invoke('get_credential_storage_status');
+}
+
+export async function enableDiskCredentials(passphrase: string): Promise<LegacyMigration> {
+    return invoke('enable_disk_credentials', { passphrase });
+}
+
+export async function unlockCredentials(passphrase: string): Promise<void> {
+    return invoke('unlock_credentials', { passphrase });
+}
+
+export async function lockCredentials(): Promise<void> {
+    return invoke('lock_credentials');
+}
+
+export async function disableDiskCredentials(deleteFile: boolean): Promise<void> {
+    return invoke('disable_disk_credentials', { deleteFile });
+}
+
 export async function getPassword(profileName: string): Promise<string | null> {
     return invoke('get_password', { profileName });
 }
@@ -51,12 +77,13 @@ export async function disconnect(): Promise<void> {
     return invoke('disconnect');
 }
 
-export async function getServiceOrgInfo(serviceOrgId: number): Promise<{ id: number, name: string }> {
-    return invoke('get_service_org_info', { serviceOrgId });
+export async function getServiceOrgInfo(serviceOrgId: number, destination = false): Promise<{ id: number, name: string }> {
+    return invoke('get_service_org_info', { serviceOrgId, destination });
 }
 
-export async function listServiceOrgs(): Promise<ServiceOrg[]> {
-    return invoke('list_service_orgs');
+/** Service orgs on the connected server; `destination` asks the migration destination instead of the source. */
+export async function listServiceOrgs(destination = false): Promise<ServiceOrg[]> {
+    return invoke('list_service_orgs', { destination });
 }
 
 // Config commands
@@ -108,8 +135,12 @@ export async function startExport(
     });
 }
 
-export async function startMigration(options: MigrationOptions, sourceSoId: number, destSoId: number): Promise<ConnectionResult> {
+export async function startMigration(options: MigrationOptions, sourceSoId: number, destSoId: number): Promise<MigrationResult> {
     return invoke('start_migration', { options, sourceSoId, destSoId });
+}
+
+export async function migrationPreflight(options: MigrationOptions, sourceSoId: number, destSoId: number): Promise<MigrationPreflight> {
+    return invoke('migration_preflight', { options, sourceSoId, destSoId });
 }
 
 export async function getExportTypes(): Promise<ExportType[]> {
@@ -137,4 +168,12 @@ export async function startImport(
     passwordPolicy?: PasswordPolicy
 ): Promise<ImportResult> {
     return invoke('start_import', { resourceType, csvPath, serviceOrgId, dryRun, passwordPolicy });
+}
+
+export async function listInstallerTargets(serviceOrgId: number): Promise<InstallerTarget[]> {
+    return invoke('list_installer_targets', { serviceOrgId });
+}
+
+export async function generateInstallerScripts(outputDir: string, targets: InstallerTarget[]): Promise<ExportResult> {
+    return invoke('generate_installer_scripts', { outputDir, targets });
 }

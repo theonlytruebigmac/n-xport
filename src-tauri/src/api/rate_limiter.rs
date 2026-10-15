@@ -19,14 +19,14 @@ pub struct EndpointLimits {
 impl Default for EndpointLimits {
     fn default() -> Self {
         let mut endpoints = HashMap::new();
-        
+
         // Auth endpoints - high concurrency allowed
         endpoints.insert("/api/auth/authenticate".into(), 50);
         endpoints.insert("/api/auth/refresh".into(), 50);
         endpoints.insert("/api/auth/validate".into(), 50);
         endpoints.insert("/api/health".into(), 50);
         endpoints.insert("/api/server-info".into(), 50);
-        
+
         // Data listing endpoints - limited to 5 concurrent
         endpoints.insert("/api/service-orgs".into(), 5);
         endpoints.insert("/api/customers".into(), 5);
@@ -35,11 +35,11 @@ impl Default for EndpointLimits {
         endpoints.insert("/api/org-units".into(), 5);
         endpoints.insert("/api/users".into(), 5);
         endpoints.insert("/api/device-filters".into(), 5);
-        
+
         // Single resource endpoints - higher limit
         endpoints.insert("/api/devices/{id}".into(), 50);
         endpoints.insert("/api/devices/{id}/assets".into(), 50);
-        
+
         // Property endpoints - limited
         endpoints.insert("/api/devices/{id}/custom-properties".into(), 5);
         endpoints.insert("/api/org-units/{id}/custom-properties".into(), 5);
@@ -47,7 +47,7 @@ impl Default for EndpointLimits {
         endpoints.insert("/api/org-units/{id}/user-roles".into(), 5);
         endpoints.insert("/api/org-units/{id}/devices".into(), 5);
         endpoints.insert("/api/org-units/{id}/active-issues".into(), 3);
-        
+
         Self {
             default: 5,
             endpoints,
@@ -76,9 +76,7 @@ impl RateLimiter {
         let semaphores = limits
             .endpoints
             .iter()
-            .map(|(endpoint, limit)| {
-                (endpoint.clone(), Arc::new(Semaphore::new(*limit as usize)))
-            })
+            .map(|(endpoint, limit)| (endpoint.clone(), Arc::new(Semaphore::new(*limit as usize))))
             .collect();
 
         Self {
@@ -131,7 +129,7 @@ impl RateLimiter {
             .acquire_owned()
             .await
             .expect("Semaphore closed unexpectedly");
-        
+
         RateLimitGuard { _permit: permit }
     }
 
@@ -165,7 +163,7 @@ mod tests {
     #[test]
     fn test_normalize_path() {
         let limiter = RateLimiter::new();
-        
+
         assert_eq!(
             limiter.normalize_path("/api/devices/12345"),
             "/api/devices/{id}"
@@ -183,7 +181,7 @@ mod tests {
     #[test]
     fn test_get_limit() {
         let limiter = RateLimiter::new();
-        
+
         assert_eq!(limiter.get_limit("/api/auth/authenticate"), 50);
         assert_eq!(limiter.get_limit("/api/devices"), 5);
         assert_eq!(limiter.get_limit("/api/devices/12345"), 50);

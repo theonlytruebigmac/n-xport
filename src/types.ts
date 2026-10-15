@@ -74,10 +74,13 @@ export interface ExportOptions {
   deviceProperties: boolean;
   users: boolean;
   deviceAssets: boolean;
+  registrationTokens: boolean;
 }
 
 export interface ExportResult {
   success: boolean;
+  cancelled: boolean;
+  partial: boolean;
   message: string;
   filesCreated: string[];
   totalRecords: number;
@@ -98,6 +101,8 @@ export interface ExportType {
   name: string;
   default: boolean;
   migrationComingSoon?: boolean;
+  /** Offered for export only; not shown when migrating. */
+  exportOnly?: boolean;
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -108,6 +113,69 @@ export interface MigrationOptions {
   accessGroups: boolean;
   users: boolean;
   orgProperties: boolean;
+  deviceProperties: boolean;
+}
+
+export type StorageBackend = 'keychain' | 'encryptedFile' | 'sessionOnly';
+
+export interface SaveCredentialsResult {
+  /** Where the JWT was stored: the OS keychain, the encrypted file, or nowhere (this session only). */
+  storage: StorageBackend;
+  /** Set when the user needs to know something, such as the credential not being saved. */
+  warning: string | null;
+}
+
+/** The opt-in encrypted credential file, as the backend reports it. */
+export interface CredentialStorageStatus {
+  /** The user has turned on encrypted file storage. */
+  diskEnabled: boolean;
+  /** An encrypted file exists on disk. */
+  vaultExists: boolean;
+  /** The passphrase has been entered this session. */
+  unlocked: boolean;
+  /** Credentials still in the old, only lightly obfuscated file. */
+  legacyEntries: number;
+}
+
+export interface LegacyMigration {
+  toKeychain: number;
+  toEncryptedFile: number;
+  remaining: number;
+}
+
+/** Shortest passphrase accepted for a new encrypted credential file. */
+export const MIN_PASSPHRASE_LENGTH = 12;
+
+export type SoapUse = 'none' | 'fallback' | 'preferred' | 'required';
+
+export interface MigrationPreflightStep {
+  resource: string;
+  label: string;
+  soap: SoapUse;
+  details: string;
+}
+
+export interface MigrationPreflight {
+  sourceSoId: number;
+  destSoId: number;
+  steps: MigrationPreflightStep[];
+  usesSoap: boolean;
+  /** Things that must already be true on the destination before the run starts. */
+  prerequisites: string[];
+  warnings: string[];
+  manualFollowUp: string[];
+}
+
+/** Map the selected data-type ids to the options the backend expects. */
+export function toMigrationOptions(selected: Set<string>): MigrationOptions {
+  return {
+    customers: selected.has('customers'),
+    userRoles: selected.has('user_roles'),
+    accessGroups: selected.has('access_groups'),
+    users: selected.has('users'),
+    orgProperties: selected.has('org_properties'),
+    deviceProperties: selected.has('device_properties'),
+  };
 }
 
 export interface ImportType {
@@ -116,7 +184,7 @@ export interface ImportType {
   supported: boolean;
 }
 
-export type ImportRowStatus = 'created' | 'skipped' | 'error' | 'planned';
+export type ImportRowStatus = 'created' | 'updated' | 'skipped' | 'error' | 'planned';
 
 export interface ImportRowOutcome {
   rowNumber: number;
@@ -127,14 +195,25 @@ export interface ImportRowOutcome {
 
 export interface ImportResult {
   success: boolean;
+  cancelled: boolean;
   message: string;
   dryRun: boolean;
   rowsTotal: number;
   rowsCreated: number;
+  rowsUpdated: number;
   rowsSkipped: number;
   rowsErrored: number;
   rowsPlanned: number;
   outcomes: ImportRowOutcome[];
+}
+
+export interface MigrationResult {
+  success: boolean;
+  cancelled: boolean;
+  issues: string[];
+  skipped: string[];
+  manualFollowUp: string[];
+  message: string;
 }
 
 export interface AppState {
@@ -150,3 +229,16 @@ export interface LogEntry {
   level: 'info' | 'success' | 'warning' | 'error' | 'debug';
   message: string;
 }
+
+/** A customer or site that can get a Windows agent installer script. */
+export interface InstallerTarget {
+  orgUnitId: number;
+  orgUnitType: 'customer' | 'site';
+  name: string;
+  customerName: string | null;
+  /** For a site, the customer it sits under. */
+  customerId: number | null;
+}
+
+/** Stable key for a target: customers and sites can share an ID space, so include the type. */
+export const installerTargetKey = (target: InstallerTarget) => `${target.orgUnitType}:${target.orgUnitId}`;

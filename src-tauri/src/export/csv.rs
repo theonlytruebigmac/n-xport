@@ -1,8 +1,8 @@
 //! CSV export functionality
 
+use serde::Serialize;
 use std::fs::File;
 use std::path::Path;
-use serde::Serialize;
 
 use crate::error::{AppError, Result};
 
@@ -13,7 +13,7 @@ where
     P: AsRef<Path>,
 {
     let path = path.as_ref();
-    
+
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -24,12 +24,14 @@ where
 
     let mut count = 0;
     for item in data {
-        writer.serialize(item)
+        writer
+            .serialize(item)
             .map_err(|e| AppError::Export(format!("CSV serialization error: {}", e)))?;
         count += 1;
     }
 
-    writer.flush()
+    writer
+        .flush()
         .map_err(|e| AppError::Export(format!("CSV flush error: {}", e)))?;
 
     Ok(count)
@@ -48,7 +50,7 @@ where
 {
     let path = path.as_ref();
     let total = data.len();
-    
+
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -58,16 +60,18 @@ where
     let mut writer = csv::Writer::from_writer(file);
 
     for (i, item) in data.iter().enumerate() {
-        writer.serialize(item)
+        writer
+            .serialize(item)
             .map_err(|e| AppError::Export(format!("CSV serialization error: {}", e)))?;
-        
+
         // Report progress every 100 items
         if i % 100 == 0 || i == total - 1 {
             on_progress(i + 1, total);
         }
     }
 
-    writer.flush()
+    writer
+        .flush()
         .map_err(|e| AppError::Export(format!("CSV flush error: {}", e)))?;
 
     Ok(total)
@@ -91,8 +95,14 @@ mod tests {
         let path = dir.path().join("test.csv");
 
         let data = vec![
-            TestData { id: 1, name: "Test 1".into() },
-            TestData { id: 2, name: "Test 2".into() },
+            TestData {
+                id: 1,
+                name: "Test 1".into(),
+            },
+            TestData {
+                id: 2,
+                name: "Test 2".into(),
+            },
         ];
 
         let count = export_to_csv(&data, &path).unwrap();

@@ -241,7 +241,7 @@ impl NcSoapClient {
 
         let mut request = self
             .http_client
-            .post(&self.endpoint_url())
+            .post(self.endpoint_url())
             .header("Content-Type", "text/xml; charset=utf-8")
             .header("SOAPAction", "\"\""); // Empty action matching JAX-WS standard
 
@@ -336,7 +336,7 @@ impl NcSoapClient {
     async fn send_soap_request(&self, envelope: &str) -> Result<String, SoapError> {
         let mut request = self
             .http_client
-            .post(&self.endpoint_url())
+            .post(self.endpoint_url())
             .header("Content-Type", "text/xml; charset=utf-8")
             .header("SOAPAction", "\"\"");
 
@@ -407,7 +407,11 @@ impl NcSoapClient {
         }
 
         let envelope = self.build_key_value_envelope("customerAdd", &settings);
-        tracing::info!("SOAP customerAdd: name='{}', parentId={}", customer_name, parent_id);
+        tracing::info!(
+            "SOAP customerAdd: name='{}', parentId={}",
+            customer_name,
+            parent_id
+        );
 
         let body = self.send_soap_request(&envelope).await?;
         parse_return_id(&body, "customerAdd")
@@ -442,7 +446,9 @@ impl NcSoapClient {
         let envelope = self.build_key_value_envelope("accessGroupAdd", &settings);
         tracing::info!(
             "SOAP accessGroupAdd: name='{}', customerID={}, type={}",
-            group_name, customer_id, group_type
+            group_name,
+            customer_id,
+            group_type
         );
 
         let body = self.send_soap_request(&envelope).await?;
@@ -472,7 +478,9 @@ impl NcSoapClient {
         let envelope = self.build_key_value_envelope("userRoleAdd", &settings);
         tracing::info!(
             "SOAP userRoleAdd: name='{}', customerID={}, {} permissions",
-            role_name, customer_id, permission_ids.len()
+            role_name,
+            customer_id,
+            permission_ids.len()
         );
 
         let body = self.send_soap_request(&envelope).await?;
@@ -524,7 +532,9 @@ impl NcSoapClient {
 
         tracing::info!(
             "SOAP organizationPropertyModify: customerId={}, propertyId={}, value='{}'",
-            customer_id, property_id, value
+            customer_id,
+            property_id,
+            value
         );
 
         self.send_soap_request(&envelope).await?;

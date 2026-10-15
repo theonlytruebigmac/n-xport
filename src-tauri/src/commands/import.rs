@@ -8,17 +8,20 @@
 
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::connection::{AppState, CachedImportContext};
 use crate::config::PasswordPolicy;
 use crate::import::handlers::{
-    import_access_group, import_customer, import_site, import_user, import_user_role,
-    ImportContext,
+    import_access_group, import_customer, import_device_property, import_org_property, import_site,
+    import_user, import_user_role, ImportContext,
 };
 use crate::import::{
-    read_rows, write_template, AccessGroupImportRow, CustomerImportRow, ImportResource,
-    RowOutcome, RowStatus, SiteImportRow, UserImportRow, UserRoleImportRow,
+    read_rows, write_template, AccessGroupImportRow, CustomerImportRow, DevicePropertyImportRow,
+    ImportResource, OrgPropertyImportRow, RowOutcome, RowStatus, SiteImportRow, UserImportRow,
+    UserRoleImportRow,
 };
 use crate::models::{LogMessage, ProgressUpdate};
 
@@ -26,14 +29,41 @@ use crate::models::{LogMessage, ProgressUpdate};
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     pub success: bool,
+    pub cancelled: bool,
     pub message: String,
     pub dry_run: bool,
     pub rows_total: usize,
     pub rows_created: usize,
+    pub rows_updated: usize,
     pub rows_skipped: usize,
     pub rows_errored: usize,
     pub rows_planned: usize,
     pub outcomes: Vec<RowOutcome>,
+}
+
+fn rows_until_cancelled<T>(
+    rows: Vec<T>,
+    cancel_token: Arc<AtomicBool>,
+) -> impl Iterator<Item = (usize, T)> {
+    rows.into_iter()
+        .enumerate()
+        .take_while(move |_| !cancel_token.load(Ordering::Relaxed))
+}
+
+fn cancelled_result(dry_run: bool) -> ImportResult {
+    ImportResult {
+        success: false,
+        cancelled: true,
+        message: "Import cancelled before processing any rows".to_string(),
+        dry_run,
+        rows_total: 0,
+        rows_created: 0,
+        rows_updated: 0,
+        rows_skipped: 0,
+        rows_errored: 0,
+        rows_planned: 0,
+        outcomes: Vec::new(),
+    }
 }
 
 fn emit_progress(app: &AppHandle, phase: &str, message: &str, percent: f32) {
@@ -62,6 +92,7 @@ fn emit_log(app: &AppHandle, level: &str, message: &str) {
 fn outcome_log_level(status: RowStatus) -> &'static str {
     match status {
         RowStatus::Created => "success",
+        RowStatus::Updated => "success",
         RowStatus::Skipped => "info",
         RowStatus::Error => "error",
         RowStatus::Planned => "info",
@@ -88,10 +119,10 @@ pub fn get_import_types() -> Vec<serde_json::Value> {
         serde_json::json!({"id": "devices", "name": "Devices", "supported": false}),
         serde_json::json!({"id": "access_groups", "name": "Access Groups", "supported": true}),
         serde_json::json!({"id": "user_roles", "name": "User Roles", "supported": true}),
-        serde_json::json!({"id": "org_properties", "name": "Organization Properties", "supported": false}),
+        serde_json::json!({"id": "org_properties", "name": "Organization Properties", "supported": true}),
         serde_json::json!({"id": "users", "name": "Users", "supported": true}),
-        serde_json::json!({"id": "device_properties", "name": "Device Properties", "supported": false}),
-        serde_json::json!({"id": "device_assets", "name": "Device Assets (Hardware)", "supported": false}),
+        serde_json::json!({"id": "device_properties", "name": "Device Properties", "supported": true}),
+        serde_json::json!({"id": "device_assets", "name": "Device Assets", "supported": false}),
     ]
 }
 
@@ -116,28 +147,53 @@ pub async fn start_import(
     };
     drop(client_guard);
 
+    state
+        .cancel_token
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    let cancel_token = state.cancel_token.clone();
+
     let soap_guard = state.source_soap_client.lock().await;
     let soap = soap_guard.as_ref();
 
     // Reuse a cached ImportContext from a previous run against the same SO if
     // present — avoids a full re-fetch of customers/sites/roles/groups when the
     // user clicks "Apply for real" right after a successful dry-run.
-    let mut ctx = {
+    let ctx = {
         let mut cache = state.import_context_cache.lock().await;
         let cached_matches = cache
             .as_ref()
             .map(|c| c.service_org_id == service_org_id)
             .unwrap_or(false);
         if cached_matches {
-            emit_progress(&app_handle, "Loading", "Reusing cached name lookups...", 5.0);
-            emit_log(&app_handle, "info", "Reusing name lookups from previous run");
-            cache.take().expect("checked above").ctx
+            emit_progress(
+                &app_handle,
+                "Loading",
+                "Reusing cached name lookups...",
+                5.0,
+            );
+            emit_log(
+                &app_handle,
+                "info",
+                "Reusing name lookups from previous run",
+            );
+            Ok(cache.take().expect("checked above").ctx)
         } else {
             emit_progress(&app_handle, "Loading", "Building name lookups...", 5.0);
-            ImportContext::load(&client, service_org_id)
-                .await
-                .map_err(|e| format!("Failed to load lookup tables: {}", e))?
+            ImportContext::load(&client, service_org_id, &cancel_token).await
         }
+    };
+    let mut ctx = match ctx {
+        Ok(ctx) => ctx,
+        Err(e) if e == "Import cancelled" => {
+            emit_progress(
+                &app_handle,
+                "Cancelled",
+                "Import cancelled during lookup loading",
+                100.0,
+            );
+            return Ok(cancelled_result(dry_run));
+        }
+        Err(e) => return Err(format!("Failed to load lookup tables: {}", e)),
     };
 
     emit_progress(&app_handle, "Parsing", "Reading CSV...", 10.0);
@@ -155,6 +211,7 @@ pub async fn start_import(
                 outcome.row_number,
                 match outcome.status {
                     RowStatus::Created => "CREATED",
+                    RowStatus::Updated => "UPDATED",
                     RowStatus::Skipped => "SKIPPED",
                     RowStatus::Error => "ERROR",
                     RowStatus::Planned => "PLANNED",
@@ -167,31 +224,38 @@ pub async fn start_import(
 
     match resource {
         ImportResource::Customers => {
-            let rows: Vec<CustomerImportRow> = read_rows(&path)
-                .map_err(|e| format!("CSV parse failed: {}", e))?;
+            let rows: Vec<CustomerImportRow> =
+                read_rows(&path).map_err(|e| format!("CSV parse failed: {}", e))?;
             let total = rows.len();
             if total == 0 {
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
-            for (i, row) in rows.into_iter().enumerate() {
+            for (i, row) in rows_until_cancelled(rows, cancel_token.clone()) {
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
-                let outcome =
-                    import_customer(row_number, row, &mut ctx, &client, soap, dry_run, &app_handle)
-                        .await;
+                let outcome = import_customer(
+                    row_number,
+                    row,
+                    &mut ctx,
+                    &client,
+                    soap,
+                    dry_run,
+                    &app_handle,
+                )
+                .await;
                 report(&outcome);
                 outcomes.push(outcome);
             }
         }
         ImportResource::Sites => {
-            let rows: Vec<SiteImportRow> = read_rows(&path)
-                .map_err(|e| format!("CSV parse failed: {}", e))?;
+            let rows: Vec<SiteImportRow> =
+                read_rows(&path).map_err(|e| format!("CSV parse failed: {}", e))?;
             let total = rows.len();
             if total == 0 {
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
-            for (i, row) in rows.into_iter().enumerate() {
+            for (i, row) in rows_until_cancelled(rows, cancel_token.clone()) {
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -202,13 +266,13 @@ pub async fn start_import(
             }
         }
         ImportResource::AccessGroups => {
-            let rows: Vec<AccessGroupImportRow> = read_rows(&path)
-                .map_err(|e| format!("CSV parse failed: {}", e))?;
+            let rows: Vec<AccessGroupImportRow> =
+                read_rows(&path).map_err(|e| format!("CSV parse failed: {}", e))?;
             let total = rows.len();
             if total == 0 {
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
-            for (i, row) in rows.into_iter().enumerate() {
+            for (i, row) in rows_until_cancelled(rows, cancel_token.clone()) {
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -227,13 +291,13 @@ pub async fn start_import(
             }
         }
         ImportResource::UserRoles => {
-            let rows: Vec<UserRoleImportRow> = read_rows(&path)
-                .map_err(|e| format!("CSV parse failed: {}", e))?;
+            let rows: Vec<UserRoleImportRow> =
+                read_rows(&path).map_err(|e| format!("CSV parse failed: {}", e))?;
             let total = rows.len();
             if total == 0 {
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
-            for (i, row) in rows.into_iter().enumerate() {
+            for (i, row) in rows_until_cancelled(rows, cancel_token.clone()) {
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -252,13 +316,13 @@ pub async fn start_import(
             }
         }
         ImportResource::Users => {
-            let rows: Vec<UserImportRow> = read_rows(&path)
-                .map_err(|e| format!("CSV parse failed: {}", e))?;
+            let rows: Vec<UserImportRow> =
+                read_rows(&path).map_err(|e| format!("CSV parse failed: {}", e))?;
             let total = rows.len();
             if total == 0 {
                 emit_log(&app_handle, "warning", "CSV had no data rows");
             }
-            for (i, row) in rows.into_iter().enumerate() {
+            for (i, row) in rows_until_cancelled(rows, cancel_token.clone()) {
                 let row_number = i + 2;
                 let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
                 emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
@@ -276,6 +340,56 @@ pub async fn start_import(
                 outcomes.push(outcome);
             }
         }
+        ImportResource::OrgProperties => {
+            let rows: Vec<OrgPropertyImportRow> =
+                read_rows(&path).map_err(|e| format!("CSV parse failed: {}", e))?;
+            let total = rows.len();
+            if total == 0 {
+                emit_log(&app_handle, "warning", "CSV had no data rows");
+            }
+            for (i, row) in rows_until_cancelled(rows, cancel_token.clone()) {
+                let row_number = i + 2;
+                let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
+                emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
+                let outcome = import_org_property(
+                    row_number,
+                    row,
+                    &mut ctx,
+                    &client,
+                    dry_run,
+                    &cancel_token,
+                    &app_handle,
+                )
+                .await;
+                report(&outcome);
+                outcomes.push(outcome);
+            }
+        }
+        ImportResource::DeviceProperties => {
+            let rows: Vec<DevicePropertyImportRow> =
+                read_rows(&path).map_err(|e| format!("CSV parse failed: {}", e))?;
+            let total = rows.len();
+            if total == 0 {
+                emit_log(&app_handle, "warning", "CSV had no data rows");
+            }
+            for (i, row) in rows_until_cancelled(rows, cancel_token.clone()) {
+                let row_number = i + 2;
+                let pct = 10.0 + ((i as f32 / total.max(1) as f32) * 85.0);
+                emit_progress(&app_handle, phase, &format!("Row {}/{}", i + 1, total), pct);
+                let outcome = import_device_property(
+                    row_number,
+                    row,
+                    &mut ctx,
+                    &client,
+                    dry_run,
+                    &cancel_token,
+                    &app_handle,
+                )
+                .await;
+                report(&outcome);
+                outcomes.push(outcome);
+            }
+        }
     }
 
     // Store the (possibly mutated) ctx back so the next start_import call for
@@ -283,16 +397,21 @@ pub async fn start_import(
     // customer IDs registered into the lookup) are persisted intentionally.
     {
         let mut cache = state.import_context_cache.lock().await;
-        *cache = Some(CachedImportContext { service_org_id, ctx });
+        *cache = Some(CachedImportContext {
+            service_org_id,
+            ctx,
+        });
     }
 
     let mut created = 0;
+    let mut updated = 0;
     let mut skipped = 0;
     let mut errored = 0;
     let mut planned = 0;
     for o in &outcomes {
         match o.status {
             RowStatus::Created => created += 1,
+            RowStatus::Updated => updated += 1,
             RowStatus::Skipped => skipped += 1,
             RowStatus::Error => errored += 1,
             RowStatus::Planned => planned += 1,
@@ -300,29 +419,78 @@ pub async fn start_import(
     }
     let total = outcomes.len();
 
-    emit_progress(&app_handle, "Complete", "Import finished", 100.0);
+    let cancelled = cancel_token.load(std::sync::atomic::Ordering::Relaxed);
+    if cancelled {
+        emit_progress(
+            &app_handle,
+            "Cancelled",
+            "Import cancelled; completed rows were kept",
+            100.0,
+        );
+    } else {
+        emit_progress(&app_handle, "Complete", "Import finished", 100.0);
+    }
 
-    let message = if dry_run {
+    let message = if cancelled {
+        format!(
+            "Import cancelled after processing {} rows: {} created, {} updated, {} skipped, {} errored",
+            total, created, updated, skipped, errored
+        )
+    } else if dry_run {
         format!(
             "Dry-run finished: {} planned, {} would skip, {} would error (of {} rows)",
             planned, skipped, errored, total
         )
     } else {
         format!(
-            "Import finished: {} created, {} skipped, {} errored (of {} rows)",
-            created, skipped, errored, total
+            "Import finished: {} created, {} updated, {} skipped, {} errored (of {} rows)",
+            created, updated, skipped, errored, total
         )
     };
 
     Ok(ImportResult {
-        success: errored == 0,
+        success: !cancelled && errored == 0,
+        cancelled,
         message,
         dry_run,
         rows_total: total,
         rows_created: created,
+        rows_updated: updated,
         rows_skipped: skipped,
         rows_errored: errored,
         rows_planned: planned,
         outcomes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cancelled_result, rows_until_cancelled};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn cancellation_result_is_not_success_shaped() {
+        let result = cancelled_result(false);
+        assert!(result.cancelled);
+        assert!(!result.success);
+        assert_eq!(result.rows_total, 0);
+        assert!(result.outcomes.is_empty());
+        assert!(result.message.contains("cancelled"));
+    }
+
+    #[test]
+    fn import_row_iteration_stops_before_the_next_row_after_cancellation() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut processed = Vec::new();
+
+        for (index, row) in rows_until_cancelled(vec!["first", "second"], cancelled.clone()) {
+            processed.push(row);
+            if index == 0 {
+                cancelled.store(true, Ordering::Relaxed);
+            }
+        }
+
+        assert_eq!(processed, vec!["first"]);
+    }
 }

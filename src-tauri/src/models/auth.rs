@@ -1,7 +1,7 @@
 //! Authentication models
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Request body for JWT authentication
 #[derive(Debug, Clone, Serialize)]
@@ -56,8 +56,10 @@ impl AuthState {
         Self {
             access_token: response.tokens.access.token,
             refresh_token: response.tokens.refresh.token,
-            access_expires_at: now + chrono::Duration::seconds(response.tokens.access.expires_in_seconds),
-            refresh_expires_at: now + chrono::Duration::seconds(response.tokens.refresh.expires_in_seconds),
+            access_expires_at: now
+                + chrono::Duration::seconds(response.tokens.access.expires_in_seconds),
+            refresh_expires_at: now
+                + chrono::Duration::seconds(response.tokens.refresh.expires_in_seconds),
         }
     }
 

@@ -1,9 +1,9 @@
 import { useRef, useEffect, useState } from 'react';
-import type { ProgressUpdate, LogEntry, ImportResult } from '../types';
+import type { ProgressUpdate, LogEntry, ImportResult, ExportResult } from '../types';
 
 interface ProgressPanelProps {
     currentStep: 'exporting' | 'complete';
-    appMode: 'export' | 'migrate' | 'import';
+    appMode: 'export' | 'migrate' | 'import' | 'installers';
     progress: ProgressUpdate | null;
     logs: LogEntry[];
     addLog: (level: LogEntry['level'], message: string) => void;
@@ -12,6 +12,8 @@ interface ProgressPanelProps {
     onCancel: () => void;
     /** Last import result, used to render summary chips and the Apply-for-real strip. */
     lastImportResult?: ImportResult | null;
+    /** Last export result, including any warnings that made it partial. */
+    lastExportResult?: ExportResult | null;
     /** Connected SO display name (for Apply-for-real strip context). */
     targetSoLabel?: string;
     /** Triggers a re-run of the last import config with dryRun=false. */
@@ -34,6 +36,7 @@ export function ProgressPanel({
     onNewExport,
     onCancel,
     lastImportResult,
+    lastExportResult,
     targetSoLabel,
     onApplyForReal,
 }: ProgressPanelProps) {
@@ -47,15 +50,34 @@ export function ProgressPanel({
     }, [logs]);
 
     const isImport = appMode === 'import';
+    const isInstallers = appMode === 'installers';
+    // Installer scripts report like an export: a result with files, warnings and errors
+    const isExportLike = appMode === 'export' || isInstallers;
     const isComplete = currentStep === 'complete';
     const isDryRun = isImport && lastImportResult?.dryRun === true;
-    const showApplyStrip = isComplete && isImport && isDryRun && lastImportResult && (lastImportResult.rowsPlanned > 0);
+    const showApplyStrip = isComplete && isImport && isDryRun && lastImportResult
+        && !lastImportResult.cancelled && (lastImportResult.rowsPlanned > 0);
+    const isCancelled = progress?.phase === 'Cancelled'
+        || (isImport && isComplete && lastImportResult?.cancelled === true);
+    const exportWarnings = lastExportResult?.warnings ?? [];
+    const exportErrors = lastExportResult?.errors ?? [];
+    const noun = isInstallers ? 'Script generation' : 'Export';
+    const exportStatus = !lastExportResult
+        ? `${noun} failed`
+        : lastExportResult.cancelled
+        ? 'Cancelled'
+        : lastExportResult.success === false
+            ? `${noun} failed`
+            : lastExportResult.partial
+                ? (isInstallers ? 'Partly complete' : 'Partial export')
+                : `${noun} complete`;
 
     const chips: ChipDef[] | null = lastImportResult
         ? [
             isDryRun
-                ? { label: 'Would create', count: lastImportResult.rowsPlanned, cls: 'planned' }
+                ? { label: 'Would apply', count: lastImportResult.rowsPlanned, cls: 'planned' }
                 : { label: 'Created', count: lastImportResult.rowsCreated, cls: 'created' },
+            ...(!isDryRun ? [{ label: 'Updated', count: lastImportResult.rowsUpdated, cls: 'created' }] : []),
             { label: isDryRun ? 'Would skip' : 'Skipped', count: lastImportResult.rowsSkipped, cls: 'skipped' },
             { label: isDryRun ? 'Would error' : 'Errored', count: lastImportResult.rowsErrored, cls: 'errored' },
             { label: 'Total rows', count: lastImportResult.rowsTotal, cls: '' },
@@ -67,10 +89,44 @@ export function ProgressPanel({
             <div className="card-header">
                 <h2 className="card-title">
                     {currentStep === 'exporting'
-                        ? (appMode === 'migrate' ? 'Migrating…' : isImport ? (isDryRun ? 'Dry-running…' : 'Importing…') : 'Exporting…')
-                        : (isImport && isDryRun ? 'Dry-run complete' : 'Complete')}
+                        ? (appMode === 'migrate' ? 'Migrating…' : isImport ? (isDryRun ? 'Dry-running…' : 'Importing…') : isInstallers ? 'Generating…' : 'Exporting…')
+                        : isCancelled ? 'Cancelled'
+                            : isExportLike ? exportStatus
+                                : (isImport && isDryRun ? 'Dry-run complete' : 'Complete')}
                 </h2>
             </div>
+
+            {isComplete && isExportLike && lastExportResult && (
+                <div
+                    role={lastExportResult.partial || !lastExportResult.success ? 'alert' : 'status'}
+                    style={{
+                        marginBottom: 'var(--space-md)',
+                        padding: 'var(--space-md)',
+                        fontSize: 'var(--text-base)',
+                        border: `1px solid ${lastExportResult.partial || !lastExportResult.success ? 'var(--color-warning)' : 'var(--color-border)'}`,
+                        borderRadius: 'var(--radius-md)',
+                    }}
+                >
+                    <strong>{lastExportResult.message}</strong>
+                    {(exportWarnings.length > 0 || exportErrors.length > 0) && (
+                        <>
+                            <div style={{ marginTop: 'var(--space-xs)' }}>
+                                {exportWarnings.length} warning{exportWarnings.length === 1 ? '' : 's'}; {exportErrors.length} error{exportErrors.length === 1 ? '' : 's'}.
+                            </div>
+                            <ul style={{ margin: 'var(--space-xs) 0 0', paddingLeft: '1.25rem' }}>
+                                {[...exportWarnings, ...exportErrors].slice(0, 5).map((issue, index) => (
+                                    <li key={`${index}-${issue}`}>{issue}</li>
+                                ))}
+                            </ul>
+                            {exportWarnings.length + exportErrors.length > 5 && (
+                                <div style={{ marginTop: 'var(--space-xs)' }}>
+                                    See the activity log for the remaining {exportWarnings.length + exportErrors.length - 5} issues.
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
 
             {/* Summary chips — only for import runs that have completed */}
             {chips && isComplete && (
@@ -110,7 +166,7 @@ export function ProgressPanel({
                 <div className="logs-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>Activity Log</span>
                     <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', fontSize: '0.75rem', cursor: 'pointer' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)', fontSize: 'var(--text-xs)', cursor: 'pointer' }}>
                             <input
                                 type="checkbox"
                                 checked={verboseLogging}
@@ -121,7 +177,7 @@ export function ProgressPanel({
                         </label>
                         <button
                             className="btn btn-ghost"
-                            style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                            style={{ padding: '4px 8px', fontSize: 'var(--text-xs)' }}
                             onClick={async () => {
                                 try {
                                     const { save } = await import('@tauri-apps/plugin-dialog');
@@ -178,13 +234,13 @@ export function ProgressPanel({
 
             {currentStep === 'complete' && (
                 <div style={{ display: 'flex', gap: 'var(--space-md)', marginTop: 'var(--space-xl)' }}>
-                    {appMode === 'export' && (
+                    {isExportLike && (
                         <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={onOpenOutput}>
-                            View Export Folder
+                            {isInstallers ? 'View Scripts Folder' : 'View Export Folder'}
                         </button>
                     )}
                     <button className="btn btn-secondary btn-lg" style={{ flex: 1 }} onClick={onNewExport}>
-                        {appMode === 'migrate' ? 'New Migration' : isImport ? (isDryRun ? 'Edit configuration' : 'Run another import') : 'Start New Export'}
+                        {appMode === 'migrate' ? 'New Migration' : isImport ? (isDryRun ? 'Edit configuration' : 'Run another import') : isInstallers ? 'Generate More' : 'Start New Export'}
                     </button>
                 </div>
             )}
