@@ -1,11 +1,13 @@
-# N-Central Data Export Tool
+# N-xport — N-Central Data Tool
 
-A cross-platform desktop application for exporting and migrating data from N-able N-Central RMM servers using the REST API.
+A cross-platform desktop application for exporting, importing, and migrating data on N-able N-central RMM servers through the N-central REST API (with the SOAP API where N-central offers no REST equivalent). A command-line tool covers exports and profile management.
+
+More detail: [Technical overview](docs/TECHNICAL_OVERVIEW.md) (architecture, migration and import behavior, credential storage, testing) and [Releasing](docs/RELEASING.md).
 
 ## Features
 
 ### Data Export
-- Export data from N-Central to CSV and JSON formats
+- Export data from N-central to CSV and JSON formats
 - Supports exporting:
   - Service Organizations
   - Customers
@@ -16,24 +18,44 @@ A cross-platform desktop application for exporting and migrating data from N-abl
   - Users
   - Organization Custom Properties
   - Device Custom Properties
+  - Device hardware/software assets
+- The completion summary reports logical records written (each record counted once, even when both CSV and JSON are selected) and distinguishes complete, partial, failed, and cancelled exports. A partial export lists the items that could not be fetched.
+
+### CSV Import
+- Import from CSV templates generated in the app, with a **dry-run** that validates every row and reports what would happen without writing to N-central
+- Supported: Customers, Sites, Access Groups, User Roles, Users, Organization property values, Device property values
+- Each row gets its own outcome (created, updated, skipped, planned, or error); rows that already exist are skipped, so re-running a file does not create duplicates
+- Not supported: Service Organizations, devices, and device assets
 
 ### Data Migration
-- Server-to-server migration between N-Central instances
-- Migrate customers, users, roles, and access groups
-- Automatic ID mapping between source and destination
-- Skip existing entities to prevent duplicates
+- Server-to-server migration between N-central instances
+- Migrates customers and sites, user roles, users, access groups, organization custom-property values, and device custom-property values (for devices already on the destination)
+- A **preflight summary** before the run shows the steps in order, a **Before you start** list of what must already exist on the destination, which steps use SOAP, and the manual follow-up already known
+- Existing entities (matched by name within the same org unit scope) are skipped, so a migration can be repeated safely
+- The result lists failures, skipped items, and manual follow-up separately; a run is only reported as fully successful if nothing needs attention
+
+### Scope and limits
+- Service-organization import and device-record creation are not supported. Device record creation is separate from agent deployment; N-xport does not deploy agents.
+- Organization custom-property values can be imported and migrated using existing property definitions. Device custom-property values can be imported and migrated for existing devices that can be matched by long name within their org-unit scope. CSV templates are available in the import workflow.
+- Property CSV rows identify existing definitions by `propertyName`; organization rows use optional `customerName`/`siteName`, and device rows use `customerName`, optional `siteName`, and `deviceName`. A blank `value` intentionally clears the current value.
+- **Custom properties need preparation on the destination.** N-xport copies property *values* only. The definitions (organization and device custom properties) must already exist on the destination, because the N-central API cannot create them; values for a missing definition are reported and skipped. Device property values also need the *devices* to already be on the destination: N-xport does not move or create devices, so install or register each device's agent against the destination server first. The migration preflight lists these under "Before you start", and the import screen shows the same notice for property imports.
+- Raw hardware/software asset inventory is export-only. Writing asset lifecycle fields (warranty, purchase, lease, replacement, cost, tag, location, or description) is not currently supported.
+- Access groups: N-central cannot change the membership of an existing group. Groups that already exist on the destination are left unchanged (and reported only if a migrated user is missing from them), groups are created with their members only when Users is migrated in the same run, and device-based access groups are not migrated. Groups defined above the source service org (inherited into it from a parent) are not migrated.
+- Property values are written only where they differ from what the destination already shows, so a value a customer merely inherits is not copied as an override.
+- N-central logins are unique per server. A user whose login already exists elsewhere on the destination server cannot be created there, and is reported with that reason.
+- Supported N-central versions are not certified. Reads, export, import (dry-run and real writes for customers, sites, roles, access groups, users, and property values), the SOAP user and role calls, and a full migration between two servers have been checked against N-central 2026.4.0.25 (source) and 2026.4.0.27 (destination) demo servers. Other versions are untested.
 
 ### Connection Management
-- Multiple server profiles support
-- Secure credential storage using system keychain
-- JWT-based API authentication
-- Connection testing and validation
+- Multiple server profiles, with separate source and destination connections for migration
+- JWT-based API authentication (the server address is always contacted over HTTPS)
+- Selecting a profile or reconnecting drops the previous connections first, so nothing from the old profile stays live
+- Credentials are stored in the operating-system keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). If there is no working keychain, **nothing is written to disk by default**: the credential is kept for the session only and the app warns you. You can opt in to a file encrypted with a passphrase you choose. See [Credential storage](#credential-storage).
 
 ### User Interface
-- Modern dark-themed interface
-- Real-time progress tracking with detailed logs
-- Export format selection (CSV, JSON, or both)
-- Custom export directory configuration
+- Dark-themed interface
+- Real-time progress tracking with a detailed activity log
+- Cancel at any time; work already completed is kept and the result is reported as cancelled
+- Export format selection (CSV, JSON, or both) and custom export directory
 
 ## System Requirements
 
@@ -41,58 +63,106 @@ A cross-platform desktop application for exporting and migrating data from N-abl
 - macOS 11+ (Intel and Apple Silicon)
 - Linux (x64, requires WebKit2GTK 4.1)
 
+These are the intended targets. The packaged installers and the auto-updater have not yet been smoke-tested on each platform.
+
 ## Installation
 
-Download the latest release for your platform from the [Releases](https://github.com/theonlytruebigmac/nc-data-export-tool/releases) page.
+Download the latest release for your platform from the [Releases](https://github.com/theonlytruebigmac/n-xport/releases) page. The release workflow builds Windows, macOS (Apple Silicon and Intel separately), and Linux installers; the exact set of files is listed on each release.
 
-### Windows
-Download and run the `.msi` installer.
+On Debian/Ubuntu, install a `.deb` with `sudo dpkg -i <file>.deb`. An `.AppImage` needs `chmod +x <file>` and can then be run directly.
 
-### macOS
-Download the `.dmg` file, open it, and drag the application to your Applications folder.
-
-### Linux
-Download the `.deb` package (Debian/Ubuntu) or `.AppImage` (universal).
-
-```bash
-# Debian/Ubuntu
-sudo dpkg -i n-central-data-export_*.deb
-
-# AppImage
-chmod +x N-Central-Data-Export_*.AppImage
-./N-Central-Data-Export_*.AppImage
-```
+Note: releases v1.0.0 through v1.2.0 have no Linux files (their Linux build never ran), and the in-app updater has no Linux entry for them. Linux installers and updates return with the first release built by the corrected workflow; the last release with Linux files is v0.1.12.
 
 ## Usage
 
-### Connecting to N-Central
+### Connecting to N-central
 
-1. Enter your N-Central server FQDN (e.g., `ncentral.example.com`)
-2. Enter your API JWT token
-3. Click "Test Connection" to validate
-4. Optionally save the profile for future use
+1. Choose Export, Import, or Migrate on the home screen
+2. Enter your N-central server FQDN (e.g. `ncentral.example.com`). Connections always use HTTPS; an `http://` prefix is upgraded.
+3. Enter your API JWT token and your **API username**. The username is required for the SOAP API, which user creation and some other operations use (see [SOAP API](#soap-api)).
+4. Click **Connect**. For a migration, connect the destination server as well.
+5. Optionally save the connection as a profile. Selecting another profile disconnects the current one first.
 
-### Exporting Data
+### Exporting data
 
-1. Connect to your N-Central server
-2. Select the data types you want to export
-3. Choose export formats (CSV and/or JSON)
-4. Click "Start Export"
-5. Files will be saved to your configured export directory
+1. Connect, then pick the service organization and the data types to export
+2. Choose export formats (CSV and/or JSON) and an output directory
+3. Click **Start export**. Files are written to the output directory.
+4. Check the completion summary: a *partial* export means some items could not be fetched, and the activity log lists them.
 
-### Migrating Data
+### Importing data from CSV
 
-1. Connect to both source and destination N-Central servers
-2. Select the data types to migrate
-3. Click "Start Migration"
-4. The tool will create missing entities and map IDs automatically
+1. Connect, then choose the resource type and download its CSV template
+2. Fill in the template and select the file
+3. Leave **Dry-run** on and run it first: every row is validated against the server and reported as *planned*, *skipped*, or *error* without any change
+4. Turn dry-run off and apply. Rows whose entity already exists are skipped, so applying the same file twice does not create duplicates.
+
+### Migrating data
+
+1. Connect the source and destination servers and pick the service organization on each
+2. Select the data to migrate. The **preflight summary** shows the steps in the order they run, a **Before you start** list of what must already exist on the destination (property definitions, and devices for device properties), which steps use SOAP, and manual follow-up that is already known
+3. Click **Start migration**
+4. Review the result. Failures, skipped (already existing) items, and manual follow-up are listed separately.
+
+Steps run in this order: customers and sites, user roles, users, access groups, organization properties, device properties. Users run before access groups because group membership can only be set when a group is created. If Customers is not selected, destination customers and sites are matched to the source by unique name; unmatched or ambiguous ones are reported and skipped along with everything beneath them.
+
+### SOAP API
+
+N-central's SOAP API is disabled by default. Enable it on the server before running operations that need it:
+
+- **Required:** creating users (import and migration)
+- **Preferred:** customer- and site-level user roles use SOAP when it is available and REST otherwise; on N-central 2026.4 REST places them correctly (checked on a live server), but older servers were reported to place them at the service-org level, so check where they landed if SOAP is unavailable
+- **Fallback only:** customers, access groups, and organization properties are written over REST first; SOAP is tried only if the REST call fails
+- **Never used:** exports, sites, device properties, and dry runs
+
+When SOAP is disabled or the API username is wrong, SOAP-dependent rows or items fail and are reported as failures. On servers older than N-central 2026.4, a customer- or site-level role created over REST because SOAP was unavailable may land at the service-org level while still being reported as created.
+
+### Credential storage
+
+JWTs (and an optional API password) are saved to the OS keychain. If the keychain fails or does not exist, the credential is **not saved**: it is kept in memory until you close the app, and the app says so. To remember credentials without a keychain (for example on headless Linux), opt in to **encrypted file storage**:
+
+- In the app: Setup → *Credential storage* → *Turn on encrypted file storage*. From the command line: `nc-export profile enable-encrypted-storage`.
+- You choose a passphrase of at least 12 characters. The file is encrypted with a key derived from it (Argon2id) and each credential is sealed with ChaCha20-Poly1305; nothing in it is readable without the passphrase. **There is no recovery**: if you forget the passphrase, delete the file (*Forgot it? Delete the file*, or `nc-export profile disable-encrypted-storage --delete-file`) and enter your credentials again.
+- The file is *locked* each time the app starts and must be unlocked with the passphrase before saved credentials in it can be used. The CLI prompts for it, or reads `NC_CREDENTIALS_PASSPHRASE` for scripts (other processes of your user can read environment variables, so prefer the prompt).
+- Turning the option off keeps the file but makes it unreadable; you can delete it at the same time. `nc-export profile storage-status` shows the current state.
+
+Earlier versions wrote credentials to a file that only lightly obfuscated them. Those entries are moved into your keychain automatically when it works; otherwise they stay readable, the app warns you, and turning on encrypted file storage re-encrypts them and removes the old file. Deleting a profile removes its source and destination credentials from every store and reports any it could not remove.
+
+## Command line
+
+The same crate builds a command-line tool, `nc-export`, for scripted exports and profile management. It is not included in the installers; build it from source:
+
+```bash
+cd src-tauri
+cargo build --release --bin nc-export     # binary: target/release/nc-export
+```
+
+```bash
+# Check a connection (JWT from --jwt or the NC_JWT environment variable)
+NC_JWT=... nc-export test --server ncentral.example.com
+
+# Export one service organization (add -f json for JSON as well; --all selects every type the CLI supports)
+NC_JWT=... nc-export export --server ncentral.example.com --service-org 50 --all -f csv -o ./nc_export
+
+# Or use a saved profile and its stored credentials
+nc-export profile add Prod --server ncentral.example.com --service-org 50
+nc-export profile set-credentials Prod          # reads the JWT from stdin
+nc-export export --profile Prod --service-org 50 --customers --sites --devices
+```
+
+Export types: `--service-orgs`, `--customers`, `--sites`, `--devices`, `--access-groups`, `--user-roles`, `--org-properties` (with none selected, all of these are exported). Profile commands: `list`, `add`, `delete`, `use`, `set-credentials`, and the encrypted-storage commands described under [Credential storage](#credential-storage).
+
+What the CLI does **not** do, compared with the app:
+- Import and migration are app-only.
+- It exports no users, device assets, or device custom properties (`--device-properties` prints a notice instead).
+- Access groups, user roles, and organization properties are exported for the service org itself, not every customer and site beneath it. Sites and devices are limited to the service org you name, but `--service-orgs` lists every service org the token can see.
 
 ## Development
 
 ### Prerequisites
 
-- Node.js 18+
-- Rust 1.70+
+- Node.js 22.22+ or 24.15+ (the frontend test tooling, jsdom and Vitest, sets this floor; building alone only needs Vite 7's 20.19+). `.nvmrc` selects Node 24 for `nvm use`, and `package.json` declares the range in `engines`.
+- Current stable Rust (CI uses the stable toolchain)
 - Platform-specific dependencies (see below)
 
 ### Linux Dependencies
@@ -105,8 +175,8 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev 
 
 ```bash
 # Clone the repository
-git clone https://github.com/theonlytruebigmac/nc-data-export-tool.git
-cd nc-data-export-tool
+git clone https://github.com/theonlytruebigmac/n-xport.git
+cd n-xport
 
 # Install dependencies
 npm install
@@ -118,30 +188,59 @@ npm run tauri dev
 npm run tauri build
 ```
 
+### Checks
+
+CI (`.github/workflows/ci.yml`) runs these on every push to `main` and every pull request; run them locally before pushing:
+
+```bash
+npx tsc --noEmit && npm test && npm run build   # frontend typecheck, tests, production build
+
+cd src-tauri
+cargo fmt --check                                              # formatting is enforced
+cargo clippy --all-targets --all-features -- -D warnings       # no warnings allowed
+cargo test --all-targets                                       # tests use a local fake N-central server
+```
+
+Frontend tests (Vitest with Testing Library, in `src/**/*.test.tsx`) render the real app with the Tauri backend mocked, and cover connecting, export selection, import dry-run and apply, the SOAP notice, cancellation, profile switching, and the migration preflight panel. The Rust tests do not need a live N-central server. They run the API client, import handlers, and migration steps against a stateful fake server (`src-tauri/src/test_support.rs`). That complements, but does not replace, validation against a real N-central instance.
+
 ### Project Structure
 
 ```
-nc-data-export-tool/
+n-xport/
 ├── src/                    # React frontend
-│   ├── App.tsx            # Main application component
+│   ├── App.tsx            # Main application component and workflow state
 │   ├── api.ts             # Tauri command invocations
 │   ├── types.ts           # TypeScript type definitions
-│   └── index.css          # Styles
+│   ├── components/        # Home, setup, configure, import, progress panels, credential storage card
+│   └── test/              # Tauri-backend mock and setup for the frontend tests
 ├── src-tauri/             # Rust backend
 │   ├── src/
-│   │   ├── api/           # N-Central API client
-│   │   ├── commands/      # Tauri commands
-│   │   ├── export/        # Export handlers (CSV, JSON)
+│   │   ├── api/           # N-central REST client, auth, rate limiter, SOAP client
+│   │   ├── cli/           # Command-line runner for nc-export
+│   │   ├── bin/           # nc-export entry point
+│   │   ├── commands/      # Tauri commands (connection, export, import, migration/, preflight)
+│   │   ├── import/        # CSV row models, templates, handlers/ (one module per resource)
+│   │   ├── credentials/   # Keychain storage with an opt-in passphrase-encrypted file
+│   │   ├── config/        # Settings and profiles
+│   │   ├── export/        # Export writers (CSV, JSON)
 │   │   ├── models/        # Data models
 │   │   └── lib.rs         # Main library
+│   ├── data/              # Bundled data: the role permission list (rolePermissionIds.csv)
+│   ├── icons/             # App icons; icons/source/ holds the images they are generated from
+│   ├── tests/             # Opt-in live-server tests
 │   ├── Cargo.toml         # Rust dependencies
 │   └── tauri.conf.json    # Tauri configuration
-└── .github/workflows/     # CI/CD workflows
+├── docs/                  # Technical overview and release process
+│   └── api/               # Checked-in N-central API-Service OpenAPI spec
+├── scripts/               # bump-version.sh: sets the version in package.json, Cargo.toml, and tauri.conf.json
+├── LICENSE                # MIT
+├── .nvmrc, .editorconfig  # Node version for nvm; editor basics (UTF-8, LF, final newline)
+└── .github/workflows/     # CI and release workflows
 ```
 
 ## API Reference
 
-The application uses the N-Central REST API v2. Required API permissions:
+The application uses the N-central API-Service REST API as described by the OpenAPI spec checked in as `docs/api/n-central-openapi-spec.json` (spec version 1.0). SOAP is used only as described under [SOAP API](#soap-api). Required API permissions:
 - Read access to all data types you want to export
 - Write access for migration operations
 
@@ -157,66 +256,9 @@ The application uses the N-Central REST API v2. Required API permissions:
 
 The application checks for updates automatically on startup and can download and install updates from GitHub Releases.
 
-## Releasing a New Version
+## Releasing
 
-Releases are built automatically by the GitHub Actions workflow in
-[`.github/workflows/release.yml`](.github/workflows/release.yml) when a tag
-matching `v*` is pushed. Use the bundled `bump-version.sh` helper so that
-`package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` stay
-in sync — mismatched versions across these files will cause the release
-build to fail.
-
-### Steps
-
-1. Make sure your working tree is clean and on `main` with the latest changes:
-
-   ```bash
-   git checkout main
-   git pull --ff-only
-   git status   # should be clean
-   ```
-
-2. Bump the version. Pick one of:
-
-   ```bash
-   ./bump-version.sh patch    # 0.1.17 -> 0.1.18
-   ./bump-version.sh minor    # 0.1.17 -> 0.2.0
-   ./bump-version.sh major    # 0.1.17 -> 1.0.0
-   ./bump-version.sh 1.2.3    # explicit version
-   ```
-
-   The script updates all three version files and prompts:
-   `Create git commit and tag vX.Y.Z? [y/N]`. Answer **`y`** — it will
-   create a commit (`Bump version to X.Y.Z`) and an annotated tag (`vX.Y.Z`).
-3. Push the commit **and** the tag in the same step so the workflow kicks off:
-
-   ```bash
-   git push && git push --tags
-   ```
-
-   (or `git push origin main --follow-tags`)
-4. Watch the build at
-   [Actions → Release](https://github.com/theonlytruebigmac/nc-data-export-tool/actions/workflows/release.yml).
-   The workflow builds macOS (arm64 + x64), Linux, and Windows artifacts,
-   signs them for the Tauri updater, and publishes a draft GitHub Release.
-5. Open the [Releases](https://github.com/theonlytruebigmac/nc-data-export-tool/releases)
-   page, edit the draft to add release notes, and publish it.
-
-### If something goes wrong
-
-- **Workflow didn't start.** The trigger is the tag push, not the commit.
-  Run `git push --tags` (or re-push a specific tag:
-  `git push origin vX.Y.Z`).
-- **Wrong version tagged.** Delete the tag locally and on the remote
-  before re-bumping:
-
-  ```bash
-  git tag -d vX.Y.Z
-  git push origin :refs/tags/vX.Y.Z
-  ```
-
-- **Version files out of sync.** Re-run `bump-version.sh <explicit-version>`
-  with the version you intended; it rewrites all three files.
+Releases are built by GitHub Actions when a `v*` tag is pushed. See [docs/RELEASING.md](docs/RELEASING.md) for the steps (version bump, tagging, publishing) and for what to do if something goes wrong.
 
 ## License
 
@@ -226,9 +268,9 @@ MIT License - See LICENSE file for details.
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes
+3. Make your changes, and run the [checks](#checks) (CI enforces them)
 4. Submit a pull request
 
 ## Support
 
-For issues and feature requests, please use the [GitHub Issues](https://github.com/theonlytruebigmac/nc-data-export-tool/issues) page.
+For issues and feature requests, please use the [GitHub Issues](https://github.com/theonlytruebigmac/n-xport/issues) page.
