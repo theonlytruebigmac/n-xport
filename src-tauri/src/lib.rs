@@ -102,6 +102,9 @@ pub fn run() {
             // Migration commands
             commands::start_migration,
             commands::migration_preflight,
+            // Installer script commands
+            commands::list_installer_targets,
+            commands::generate_installer_scripts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

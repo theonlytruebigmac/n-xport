@@ -57,6 +57,11 @@ impl NcClient {
 }
 
 impl NcClient {
+    /// The server URL this client talks to, without a trailing slash.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// Authenticate with JWT
     pub async fn authenticate(&self, jwt: &str) -> ApiResult<()> {
         self.auth.authenticate(jwt).await
