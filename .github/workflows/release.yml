@@ -6,7 +6,65 @@ on:
       - 'v*'
 
 jobs:
+  # A release is only built from a tag whose version matches the app. A mismatch would publish
+  # installers and an updater manifest under the wrong version.
+  verify:
+    name: Verify version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version files agree
+        run: ./scripts/bump-version.sh --check
+
+      - name: Tag matches the app version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match the app version v$VERSION" >&2
+            exit 1
+          fi
+
+  # The same checks that run on every push and pull request. Nothing is built or published
+  # unless they pass.
+  checks:
+    name: Checks
+    uses: ./.github/workflows/ci.yml
+
+  # The release is created as a draft and stays one until every build has uploaded its files,
+  # so a failed platform build can never leave a half-complete release that installed apps see
+  # as the latest update. Creating it here, once, also keeps the parallel builds from racing to
+  # create it themselves.
+  create-release:
+    name: Create draft release
+    needs: [verify, checks]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - name: Create the draft (or reuse one from an earlier attempt)
+        id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # `gh release view` cannot see drafts, so look through the full release list.
+          RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .id" | head -n 1)
+          if [ -z "$RELEASE_ID" ]; then
+            RELEASE_ID=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$TAG" \
+              -f name="N-xport $TAG" \
+              -f body="See the assets below to download and install this version." \
+              -F draft=true -F prerelease=false \
+              --jq .id)
+          fi
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+
   build-tauri:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -17,13 +75,12 @@ jobs:
             args: '--target aarch64-apple-darwin'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
-          - platform: 'self-hosted'
+          - platform: 'ubuntu-22.04'
             args: ''
-            labels: [self-hosted, Linux, X64]
           - platform: 'windows-latest'
             args: ''
 
-    runs-on: ${{ matrix.labels || matrix.platform }}
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -38,10 +95,10 @@ jobs:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install dependencies (Linux only)
-        if: matrix.platform == 'self-hosted'
+        if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - name: Install frontend dependencies
         run: npm ci
@@ -53,9 +110,40 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'N-xport v__VERSION__'
-          releaseBody: 'See the assets below to download and install this version.'
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  # Runs only when every build succeeded. Confirms the updater manifest covers every platform
+  # (parallel builds each merge their entries into latest.json) and then publishes.
+  publish-release:
+    name: Publish release
+    needs: [create-release, build-tauri]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check the draft is complete
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: |
+          ASSET_URL=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            --jq '.assets[] | select(.name == "latest.json") | .url')
+          if [ -z "$ASSET_URL" ]; then
+            echo "The draft has no latest.json" >&2
+            exit 1
+          fi
+          gh api -H "Accept: application/octet-stream" "$ASSET_URL" > latest.json
+          for PLATFORM in darwin-aarch64 darwin-x86_64 linux-x86_64 windows-x86_64; do
+            if ! jq -e --arg p "$PLATFORM" '.platforms[$p]' latest.json > /dev/null; then
+              echo "latest.json has no entry for $PLATFORM; re-run the failed build job, then this one" >&2
+              exit 1
+            fi
+          done
+          echo "latest.json covers every platform."
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false
