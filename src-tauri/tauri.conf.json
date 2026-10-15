@@ -38,8 +38,8 @@
     "category": "Utility",
     "shortDescription": "Export data from N-Central via REST API",
     "longDescription": "Cross-platform tool to export customer data from N-Central RMM using the REST API with rate limiting and async support.",
-    "publisher": "FrazierSystems",
-    "copyright": "© 2026 FrazierSystems",
+    "publisher": "theonlytruebigmac",
+    "copyright": "© 2026 theonlytruebigmac",
     "createUpdaterArtifacts": true
   },
   "plugins": {
