@@ -1,6 +1,6 @@
 import type { ExportType } from '../types';
 import { ServiceOrgCombobox } from './ServiceOrgCombobox';
-import { SoapApiNotice } from './SoapApiNotice';
+import { MigrationPreflightPanel } from './MigrationPreflightPanel';
 
 interface ConfigurePanelProps {
     appMode: 'export' | 'migrate';
@@ -17,6 +17,9 @@ interface ConfigurePanelProps {
     onBack: () => void;
     /** Optional, used to display the SO name immediately while the discovery list loads. */
     connectedServiceOrgName?: string;
+    /** Migration only: source and destination service org IDs, shown in the preflight summary. */
+    sourceSoId?: number;
+    destSoId?: number;
 }
 
 export function ConfigurePanel({
@@ -31,10 +34,9 @@ export function ConfigurePanel({
     onBrowseOutput,
     onBack,
     connectedServiceOrgName,
+    sourceSoId,
+    destSoId,
 }: ConfigurePanelProps) {
-    const usesSoap = appMode === 'migrate'
-        && ['customers', 'user_roles', 'access_groups', 'users', 'org_properties']
-            .some(id => selectedTypes.has(id));
 
     return (
         <div className="card card-compact fade-in">
@@ -92,7 +94,13 @@ export function ConfigurePanel({
                 </div>
             </div>
 
-            {usesSoap && <SoapApiNotice />}
+            {appMode === 'migrate' && (
+                <MigrationPreflightPanel
+                    selectedTypes={selectedTypes}
+                    sourceSoId={sourceSoId}
+                    destSoId={destSoId}
+                />
+            )}
 
             {appMode !== 'migrate' && (
                 <div className="form-group">

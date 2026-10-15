@@ -22,7 +22,7 @@ import type {
   ExportResult,
   PasswordPolicy
 } from './types';
-import { DEFAULT_PASSWORD_POLICY } from './types';
+import { DEFAULT_PASSWORD_POLICY, toMigrationOptions } from './types';
 
 function App() {
   // Connection state
@@ -195,6 +195,19 @@ function App() {
     });
   }, []);
 
+  /** Save a credential and tell the user where it went, warning if it is not in the OS keychain. */
+  const saveCredentialsWithNotice = async (name: string, secret: string) => {
+    const result = await api.saveCredentials(name, secret);
+    if (result.storage === 'keychain') {
+      addLog('info', `Credentials for "${name}" saved to the system keychain`);
+    } else if (result.storage === 'encryptedFile') {
+      addLog('info', `Credentials for "${name}" saved to the encrypted credentials file`);
+    } else {
+      addLog('warning', `Credentials for "${name}" were not saved and will be forgotten when the app closes`);
+    }
+    if (result.warning) addLog('warning', result.warning);
+  };
+
   const handleConnect = async () => {
     if (!fqdn || !jwt) {
       addLog('error', 'Please enter server FQDN and JWT token');
@@ -225,8 +238,7 @@ function App() {
         if (result.serverVersion) addLog('info', `Server version: ${result.serverVersion}`);
 
         if (activeProfile) {
-          await api.saveCredentials(activeProfile.name, jwt);
-          addLog('info', 'Credentials saved to keychain');
+          await saveCredentialsWithNotice(activeProfile.name, jwt);
         }
       } else {
         setConnectionStatus('error');
@@ -238,8 +250,8 @@ function App() {
     }
   };
 
-  const handleDisconnect = async () => {
-    await api.disconnect();
+  /** Forget the displayed state of both connections (the backend is cleared by api.disconnect). */
+  const resetConnectionState = () => {
     setConnectionStatus('disconnected');
     setServerVersion('');
     setServerUrl('');
@@ -248,6 +260,11 @@ function App() {
     setDestServerVersion('');
     setDestServerUrl('');
     setDestConnectedServiceOrg(null);
+  };
+
+  const handleDisconnect = async () => {
+    await api.disconnect();
+    resetConnectionState();
     addLog('info', 'Disconnected');
     setCurrentStep('setup');
   };
@@ -280,12 +297,10 @@ function App() {
       await api.setActiveProfile(newProfileName);
 
       if (jwt) {
-        await api.saveCredentials(newProfileName, jwt);
-        addLog('debug', `Saved source credentials for ${newProfileName}`);
+        await saveCredentialsWithNotice(newProfileName, jwt);
       }
       if (isMigration && destJwt) {
-        await api.saveCredentials(`${newProfileName}_dest`, destJwt);
-        addLog('debug', `Saved destination credentials for ${newProfileName}_dest`);
+        await saveCredentialsWithNotice(`${newProfileName}_dest`, destJwt);
       }
 
       await loadProfiles();
@@ -299,6 +314,16 @@ function App() {
   };
 
   const handleSelectProfile = async (profile: Profile) => {
+    // Drop the previous profile's connections first, in the backend and in the UI, so
+    // nothing from the old profile (a live client, a destination, cached lookups) can be
+    // used while the new profile is unconnected or fails to connect.
+    try {
+      await api.disconnect();
+    } catch (e) {
+      addLog('error', `Failed to disconnect the previous profile: ${e}`);
+    }
+    resetConnectionState();
+
     setActiveProfile(profile);
     setFqdn(profile.source.fqdn);
     setServiceOrgId('');
@@ -308,6 +333,12 @@ function App() {
     if (profile.destination) {
       setDestFqdn(profile.destination.fqdn);
       setDestServiceOrgId('');
+    } else {
+      // The new profile has no destination: forget the previous profile's.
+      setDestFqdn('');
+      setDestServiceOrgId('');
+      setDestJwt('');
+      setDestApiUsername('');
     }
 
     try {
@@ -378,7 +409,7 @@ function App() {
       if (hasCreds) {
         setConnectionStatus('connecting');
         addLog('info', `Connecting with saved credentials for ${profile.name}...`);
-        const result = await api.connectWithProfile(profile.name, profile.source.fqdn);
+        const result = await api.connectWithProfile(profile.name, profile.source.fqdn, profile.source.username);
         if (result.success) {
           setConnectionStatus('connected');
           setServerVersion(result.serverVersion || '');
@@ -520,13 +551,7 @@ function App() {
     addLog('info', 'Starting migration...');
 
     try {
-      const options: MigrationOptions = {
-        customers: selectedTypes.has('customers'),
-        userRoles: selectedTypes.has('user_roles'),
-        accessGroups: selectedTypes.has('access_groups'),
-        users: selectedTypes.has('users'),
-        orgProperties: selectedTypes.has('org_properties'),
-      };
+      const options: MigrationOptions = toMigrationOptions(selectedTypes);
 
       const actualDestSoId = destServiceOrgId ? parseInt(destServiceOrgId) : destConnectedServiceOrg.id;
       addLog('info', `Starting migration: Source SO ${parseInt(serviceOrgId)} → Destination SO ${actualDestSoId}`);
@@ -743,6 +768,8 @@ function App() {
               onBrowseOutput={handleBrowseOutput}
               onBack={() => setCurrentStep('setup')}
               connectedServiceOrgName={connectedServiceOrg?.name}
+              sourceSoId={serviceOrgId ? parseInt(serviceOrgId) : undefined}
+              destSoId={destServiceOrgId ? parseInt(destServiceOrgId) : destConnectedServiceOrg?.id}
             />
           )}
 

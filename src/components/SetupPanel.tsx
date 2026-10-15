@@ -1,5 +1,6 @@
 import type { Profile, ConnectionStatus, LogEntry } from '../types';
 import * as api from '../api';
+import { CredentialStorageCard } from './CredentialStorageCard';
 import { ServiceOrgCombobox } from './ServiceOrgCombobox';
 
 interface SetupPanelProps {
@@ -173,8 +174,10 @@ export function SetupPanel({
                         e.stopPropagation();
                         if (confirm(`Delete profile "${profile.name}"?`)) {
                           try {
-                            await api.deleteProfile(profile.name);
+                            // Remove credentials first: if that fails the profile is kept, so the
+                            // user can retry instead of losing track of a stored secret.
                             await api.deleteCredentials(profile.name);
+                            await api.deleteProfile(profile.name);
                             addLog('info', `Deleted profile "${profile.name}"`);
                             await loadProfiles();
                             if (activeProfile?.name === profile.name) {
@@ -275,6 +278,9 @@ export function SetupPanel({
           {renderConnectionCard(appMode === 'migrate' ? 'Source' : 'Direct', false)}
           {appMode === 'migrate' && renderConnectionCard('Destination', true)}
         </div>
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <CredentialStorageCard addLog={addLog} onChanged={loadProfiles} />
       </div>
     </div>
   );

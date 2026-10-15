@@ -71,8 +71,9 @@ export function ProgressPanel({
     const chips: ChipDef[] | null = lastImportResult
         ? [
             isDryRun
-                ? { label: 'Would create', count: lastImportResult.rowsPlanned, cls: 'planned' }
+                ? { label: 'Would apply', count: lastImportResult.rowsPlanned, cls: 'planned' }
                 : { label: 'Created', count: lastImportResult.rowsCreated, cls: 'created' },
+            ...(!isDryRun ? [{ label: 'Updated', count: lastImportResult.rowsUpdated, cls: 'created' }] : []),
             { label: isDryRun ? 'Would skip' : 'Skipped', count: lastImportResult.rowsSkipped, cls: 'skipped' },
             { label: isDryRun ? 'Would error' : 'Errored', count: lastImportResult.rowsErrored, cls: 'errored' },
             { label: 'Total rows', count: lastImportResult.rowsTotal, cls: '' },

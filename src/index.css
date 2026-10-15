@@ -1744,6 +1744,48 @@ body {
   color: var(--color-warning);
 }
 
+/* Migration preflight summary */
+.preflight-panel {
+  margin-top: var(--space-md);
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.preflight-title { font-weight: 600; color: var(--color-text-primary); }
+.preflight-scope { margin-top: 2px; color: var(--color-text-muted); }
+.preflight-warning { margin-top: 8px; color: var(--color-warning); }
+.preflight-steps { margin: 10px 0 0; padding-left: 20px; }
+.preflight-steps li { margin-bottom: 8px; }
+.preflight-step-label { font-weight: 600; color: var(--color-text-primary); }
+.preflight-soap {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 0.72rem;
+  background: var(--color-bg-tertiary);
+}
+.preflight-soap-fallback, .preflight-soap-preferred, .preflight-soap-required { color: var(--color-warning); }
+.preflight-step-details { color: var(--color-text-muted); }
+.preflight-prereq {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-bg);
+}
+.preflight-prereq strong { color: var(--color-warning); }
+.preflight-prereq ul { margin: 4px 0 0; padding-left: 20px; }
+.credstore-text { margin: 6px 0; font-size: 0.85rem; color: var(--color-text-secondary); line-height: 1.45; }
+.credstore-form { display: grid; gap: 6px; margin: 8px 0; max-width: 420px; }
+.credstore-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.credstore-error { margin-top: 8px; color: var(--color-error); font-size: 0.85rem; }
+.preflight-followup { margin-top: 10px; }
+.preflight-followup ul { margin: 4px 0 0; padding-left: 20px; }
+
 /* Apply-for-real confirmation strip */
 .confirm-strip {
   display: flex;

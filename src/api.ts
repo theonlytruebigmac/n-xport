@@ -8,6 +8,10 @@ import type {
     ExportOptions,
     ExportResult,
     MigrationOptions,
+    MigrationPreflight,
+    SaveCredentialsResult,
+    CredentialStorageStatus,
+    LegacyMigration,
     ImportType,
     ImportResult,
     MigrationResult,
@@ -28,7 +32,7 @@ export async function connectWithProfile(profileName: string, fqdn: string, user
     return invoke('connect_with_profile', { profileName, fqdn, username });
 }
 
-export async function saveCredentials(profileName: string, jwt: string): Promise<void> {
+export async function saveCredentials(profileName: string, jwt: string): Promise<SaveCredentialsResult> {
     return invoke('save_credentials', { profileName, jwt });
 }
 
@@ -42,6 +46,26 @@ export async function getCredentials(profileName: string): Promise<string | null
 
 export async function deleteCredentials(profileName: string): Promise<void> {
     return invoke('delete_credentials', { profileName });
+}
+
+export async function getCredentialStorageStatus(): Promise<CredentialStorageStatus> {
+    return invoke('get_credential_storage_status');
+}
+
+export async function enableDiskCredentials(passphrase: string): Promise<LegacyMigration> {
+    return invoke('enable_disk_credentials', { passphrase });
+}
+
+export async function unlockCredentials(passphrase: string): Promise<void> {
+    return invoke('unlock_credentials', { passphrase });
+}
+
+export async function lockCredentials(): Promise<void> {
+    return invoke('lock_credentials');
+}
+
+export async function disableDiskCredentials(deleteFile: boolean): Promise<void> {
+    return invoke('disable_disk_credentials', { deleteFile });
 }
 
 export async function getPassword(profileName: string): Promise<string | null> {
@@ -111,6 +135,10 @@ export async function startExport(
 
 export async function startMigration(options: MigrationOptions, sourceSoId: number, destSoId: number): Promise<MigrationResult> {
     return invoke('start_migration', { options, sourceSoId, destSoId });
+}
+
+export async function migrationPreflight(options: MigrationOptions, sourceSoId: number, destSoId: number): Promise<MigrationPreflight> {
+    return invoke('migration_preflight', { options, sourceSoId, destSoId });
 }
 
 export async function getExportTypes(): Promise<ExportType[]> {

@@ -4,6 +4,7 @@ import * as api from '../api';
 import type { ImportType, LogEntry, PasswordPolicy } from '../types';
 import { DEFAULT_PASSWORD_POLICY } from '../types';
 import { ServiceOrgCombobox } from './ServiceOrgCombobox';
+import { PropertyPrerequisitesNotice } from './PropertyPrerequisitesNotice';
 import { SoapApiNotice } from './SoapApiNotice';
 
 interface ImportPanelProps {
@@ -184,6 +185,9 @@ export function ImportPanel({
 
             {['customers', 'access_groups', 'user_roles', 'users'].includes(selectedResource)
                 && <SoapApiNotice />}
+
+            {(selectedResource === 'org_properties' || selectedResource === 'device_properties')
+                && <PropertyPrerequisitesNotice resource={selectedResource} />}
 
             {selectedResource === 'users' && (
                 <div className="form-group password-policy">
