@@ -19,6 +19,7 @@ import type {
   ProgressUpdate,
   LogEntry,
   ExportType,
+  ExportResult,
   PasswordPolicy
 } from './types';
 import { DEFAULT_PASSWORD_POLICY } from './types';
@@ -49,6 +50,7 @@ function App() {
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [exportFormats, setExportFormats] = useState<Set<string>>(new Set(['csv']));
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
+  const [lastExportResult, setLastExportResult] = useState<ExportResult | null>(null);
 
   // Logs
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -423,6 +425,7 @@ function App() {
 
     setCurrentStep('exporting');
     setProgress(null);
+    setLastExportResult(null);
     addLog('info', 'Starting export...');
 
     try {
@@ -440,7 +443,12 @@ function App() {
       };
 
       const result = await api.startExport(outputDir, options, Array.from(exportFormats), parseInt(serviceOrgId));
-      if (result.success) {
+      setLastExportResult(result);
+      if (result.cancelled) {
+        addLog('warning', result.message);
+      } else if (result.partial) {
+        addLog('warning', result.message);
+      } else if (result.success) {
         addLog('success', result.message);
         addLog('info', `Files: ${result.filesCreated.join(', ')}`);
       } else {
@@ -489,7 +497,7 @@ function App() {
         importResource === 'users' ? passwordPolicy : undefined,
       );
       setLastImportResult(result);
-      addLog(result.success ? 'success' : 'warning', result.message);
+      addLog(result.cancelled ? 'warning' : result.success ? 'success' : 'warning', result.message);
     } catch (e) {
       addLog('error', `Import failed: ${e}`);
     } finally {
@@ -524,11 +532,18 @@ function App() {
       addLog('info', `Starting migration: Source SO ${parseInt(serviceOrgId)} → Destination SO ${actualDestSoId}`);
 
       const result = await api.startMigration(options, parseInt(serviceOrgId), actualDestSoId);
-      if (result.success) {
+      if (result.cancelled) {
+        addLog('warning', result.message);
+      } else if (result.success) {
         addLog('success', result.message);
-      } else {
+      } else if (result.issues.length > 0) {
         addLog('error', result.message);
+      } else {
+        addLog('warning', result.message);
       }
+      for (const issue of result.issues) addLog('error', issue);
+      for (const item of result.skipped) addLog('info', item);
+      for (const item of result.manualFollowUp) addLog('warning', item);
     } catch (e) {
       addLog('error', `Migration failed: ${e}`);
     } finally {
@@ -760,9 +775,14 @@ function App() {
               onNewExport={() => setCurrentStep('configure')}
               onCancel={async () => {
                 addLog('warning', 'Cancellation requested...');
-                await api.cancelExport();
+                try {
+                  await api.cancelExport();
+                } catch (e) {
+                  addLog('error', `Failed to request cancellation: ${e}`);
+                }
               }}
               lastImportResult={lastImportResult}
+              lastExportResult={lastExportResult}
               targetSoLabel={connectedServiceOrg ? `${connectedServiceOrg.name} (${connectedServiceOrg.id})` : (serviceOrgId ? `SO ${serviceOrgId}` : undefined)}
               onApplyForReal={handleApplyForReal}
             />

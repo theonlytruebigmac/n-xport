@@ -10,6 +10,7 @@ import type {
     MigrationOptions,
     ImportType,
     ImportResult,
+    MigrationResult,
     PasswordPolicy,
     ServiceOrg
 } from './types';
@@ -108,7 +109,7 @@ export async function startExport(
     });
 }
 
-export async function startMigration(options: MigrationOptions, sourceSoId: number, destSoId: number): Promise<ConnectionResult> {
+export async function startMigration(options: MigrationOptions, sourceSoId: number, destSoId: number): Promise<MigrationResult> {
     return invoke('start_migration', { options, sourceSoId, destSoId });
 }
 

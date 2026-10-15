@@ -1,5 +1,6 @@
 import type { ExportType } from '../types';
 import { ServiceOrgCombobox } from './ServiceOrgCombobox';
+import { SoapApiNotice } from './SoapApiNotice';
 
 interface ConfigurePanelProps {
     appMode: 'export' | 'migrate';
@@ -31,6 +32,10 @@ export function ConfigurePanel({
     onBack,
     connectedServiceOrgName,
 }: ConfigurePanelProps) {
+    const usesSoap = appMode === 'migrate'
+        && ['customers', 'user_roles', 'access_groups', 'users', 'org_properties']
+            .some(id => selectedTypes.has(id));
+
     return (
         <div className="card card-compact fade-in">
             <div className="card-header">
@@ -86,6 +91,8 @@ export function ConfigurePanel({
                     })}
                 </div>
             </div>
+
+            {usesSoap && <SoapApiNotice />}
 
             {appMode !== 'migrate' && (
                 <div className="form-group">

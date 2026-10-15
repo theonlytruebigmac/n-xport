@@ -78,6 +78,8 @@ export interface ExportOptions {
 
 export interface ExportResult {
   success: boolean;
+  cancelled: boolean;
+  partial: boolean;
   message: string;
   filesCreated: string[];
   totalRecords: number;
@@ -127,6 +129,7 @@ export interface ImportRowOutcome {
 
 export interface ImportResult {
   success: boolean;
+  cancelled: boolean;
   message: string;
   dryRun: boolean;
   rowsTotal: number;
@@ -135,6 +138,15 @@ export interface ImportResult {
   rowsErrored: number;
   rowsPlanned: number;
   outcomes: ImportRowOutcome[];
+}
+
+export interface MigrationResult {
+  success: boolean;
+  cancelled: boolean;
+  issues: string[];
+  skipped: string[];
+  manualFollowUp: string[];
+  message: string;
 }
 
 export interface AppState {

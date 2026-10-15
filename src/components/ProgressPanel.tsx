@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
-import type { ProgressUpdate, LogEntry, ImportResult } from '../types';
+import type { ProgressUpdate, LogEntry, ImportResult, ExportResult } from '../types';
 
 interface ProgressPanelProps {
     currentStep: 'exporting' | 'complete';
@@ -12,6 +12,8 @@ interface ProgressPanelProps {
     onCancel: () => void;
     /** Last import result, used to render summary chips and the Apply-for-real strip. */
     lastImportResult?: ImportResult | null;
+    /** Last export result, including any warnings that made it partial. */
+    lastExportResult?: ExportResult | null;
     /** Connected SO display name (for Apply-for-real strip context). */
     targetSoLabel?: string;
     /** Triggers a re-run of the last import config with dryRun=false. */
@@ -34,6 +36,7 @@ export function ProgressPanel({
     onNewExport,
     onCancel,
     lastImportResult,
+    lastExportResult,
     targetSoLabel,
     onApplyForReal,
 }: ProgressPanelProps) {
@@ -49,7 +52,21 @@ export function ProgressPanel({
     const isImport = appMode === 'import';
     const isComplete = currentStep === 'complete';
     const isDryRun = isImport && lastImportResult?.dryRun === true;
-    const showApplyStrip = isComplete && isImport && isDryRun && lastImportResult && (lastImportResult.rowsPlanned > 0);
+    const showApplyStrip = isComplete && isImport && isDryRun && lastImportResult
+        && !lastImportResult.cancelled && (lastImportResult.rowsPlanned > 0);
+    const isCancelled = progress?.phase === 'Cancelled'
+        || (isImport && isComplete && lastImportResult?.cancelled === true);
+    const exportWarnings = lastExportResult?.warnings ?? [];
+    const exportErrors = lastExportResult?.errors ?? [];
+    const exportStatus = !lastExportResult
+        ? 'Export failed'
+        : lastExportResult.cancelled
+        ? 'Cancelled'
+        : lastExportResult.success === false
+            ? 'Export failed'
+            : lastExportResult.partial
+                ? 'Partial export'
+                : 'Export complete';
 
     const chips: ChipDef[] | null = lastImportResult
         ? [
@@ -68,9 +85,42 @@ export function ProgressPanel({
                 <h2 className="card-title">
                     {currentStep === 'exporting'
                         ? (appMode === 'migrate' ? 'Migrating…' : isImport ? (isDryRun ? 'Dry-running…' : 'Importing…') : 'Exporting…')
-                        : (isImport && isDryRun ? 'Dry-run complete' : 'Complete')}
+                        : isCancelled ? 'Cancelled'
+                            : appMode === 'export' ? exportStatus
+                                : (isImport && isDryRun ? 'Dry-run complete' : 'Complete')}
                 </h2>
             </div>
+
+            {isComplete && appMode === 'export' && lastExportResult && (
+                <div
+                    role={lastExportResult.partial || !lastExportResult.success ? 'alert' : 'status'}
+                    style={{
+                        marginBottom: 'var(--space-md)',
+                        padding: 'var(--space-md)',
+                        border: `1px solid ${lastExportResult.partial || !lastExportResult.success ? 'var(--color-warning)' : 'var(--color-border)'}`,
+                        borderRadius: 'var(--radius-md)',
+                    }}
+                >
+                    <strong>{lastExportResult.message}</strong>
+                    {(exportWarnings.length > 0 || exportErrors.length > 0) && (
+                        <>
+                            <div style={{ marginTop: 'var(--space-xs)' }}>
+                                {exportWarnings.length} warning{exportWarnings.length === 1 ? '' : 's'}; {exportErrors.length} error{exportErrors.length === 1 ? '' : 's'}.
+                            </div>
+                            <ul style={{ margin: 'var(--space-xs) 0 0', paddingLeft: '1.25rem' }}>
+                                {[...exportWarnings, ...exportErrors].slice(0, 5).map((issue, index) => (
+                                    <li key={`${index}-${issue}`}>{issue}</li>
+                                ))}
+                            </ul>
+                            {exportWarnings.length + exportErrors.length > 5 && (
+                                <div style={{ marginTop: 'var(--space-xs)' }}>
+                                    See the activity log for the remaining {exportWarnings.length + exportErrors.length - 5} issues.
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
 
             {/* Summary chips — only for import runs that have completed */}
             {chips && isComplete && (
