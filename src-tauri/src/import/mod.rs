@@ -364,12 +364,15 @@ pub fn read_rows<T>(path: &Path) -> Result<Vec<T>>
 where
     T: serde::de::DeserializeOwned,
 {
-    let file = std::fs::File::open(path)
-        .map_err(|e| AppError::Export(format!("Failed to open CSV: {}", e)))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| AppError::Export(format!("Failed to open CSV: {}", e)))?;
+    // Excel's "CSV UTF-8" adds a byte order mark. Left in place it becomes part of the first
+    // header name, so that column would never match.
+    let content = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
     let mut reader = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
         .has_headers(true)
-        .from_reader(file);
+        .from_reader(content);
 
     let mut rows = Vec::new();
     for (i, result) in reader.deserialize::<T>().enumerate() {
@@ -406,6 +409,27 @@ mod tests {
     use super::{
         read_rows, write_template, DevicePropertyImportRow, ImportResource, OrgPropertyImportRow,
     };
+
+    #[test]
+    fn a_csv_saved_by_excel_with_a_byte_order_mark_still_reads_its_first_column() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Row {
+            customer_name: String,
+            #[serde(default)]
+            site_name: Option<String>,
+        }
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("with-bom.csv");
+        std::fs::write(&path, b"\xEF\xBB\xBFcustomerName,siteName\r\nAcme,HQ\r\n").unwrap();
+        let rows: Vec<Row> = read_rows(&path).expect("csv with BOM parses");
+        assert_eq!(rows[0].customer_name, "Acme");
+        assert_eq!(rows[0].site_name.as_deref(), Some("HQ"));
+
+        let plain = directory.path().join("plain.csv");
+        std::fs::write(&plain, b"customerName,siteName\nAcme,HQ\n").unwrap();
+        assert_eq!(read_rows::<Row>(&plain).unwrap()[0].customer_name, "Acme");
+    }
 
     #[test]
     fn property_import_templates_are_registered_and_parseable() {
