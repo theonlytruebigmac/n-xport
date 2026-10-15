@@ -1,0 +1,12 @@
+mod access_group_live_shape_tests;
+mod device_property_prerequisite_tests;
+mod group_membership_note_tests;
+mod live_migration_tests;
+mod mapping_validation_tests;
+mod org_property_hierarchy_tests;
+mod org_unit_mapping_tests;
+mod repeat_entity_migration_tests;
+mod repeat_migration_tests;
+mod scoped_role_tests;
+mod soap_usage_tests;
+mod summary_tests;

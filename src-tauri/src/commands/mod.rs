@@ -5,9 +5,11 @@ pub mod config;
 pub mod export;
 pub mod import;
 pub mod migration;
+pub mod migration_preflight;
 
 pub use connection::*;
 pub use config::*;
 pub use export::*;
 pub use import::*;
 pub use migration::*;
+pub use migration_preflight::*;

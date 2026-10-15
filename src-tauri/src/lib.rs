@@ -72,6 +72,7 @@ pub fn run() {
             commands::get_import_types,
             // Migration commands
             commands::start_migration,
+            commands::migration_preflight,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
