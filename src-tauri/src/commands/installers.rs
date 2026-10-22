@@ -4,6 +4,7 @@
 //! sensitive. The install logic comes from the N-central Customer Installer Generator sample
 //! script by Morgan Rourke (https://github.com/MorganR99).
 
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -15,9 +16,14 @@ use crate::commands::export::registration_tokens::{
     fetch_tokens, token_targets, TokenPhase, TokenTarget,
 };
 use crate::commands::export::ExportResult;
+use crate::error::ApiResult;
 use crate::models::{ProgressUpdate, RegistrationToken};
 
 const TEMPLATE: &str = include_str!("../../data/install_agent.ps1.template");
+
+/// The software ID of the Windows agent in N-central's download list. Asking for a download
+/// link to it is what makes N-central issue a registration token.
+const WINDOWS_AGENT_SOFTWARE_ID: i64 = 101;
 
 /// A customer or site that can get an installer script.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -214,6 +220,92 @@ fn token_expired(expiry: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
     chrono::DateTime::parse_from_rfc3339(instant).is_ok_and(|date| date < now)
 }
 
+type FetchedToken = (TokenTarget, ApiResult<RegistrationToken>);
+
+/// Which targets (by index) had a token requested, and for which the request failed.
+#[derive(Debug, Default)]
+struct TokenCreation {
+    requested: HashSet<usize>,
+    failed: HashSet<usize>,
+}
+
+/// A token that was read successfully but is empty, meaning N-central has not issued one yet.
+fn lacks_token(token: &ApiResult<RegistrationToken>) -> bool {
+    matches!(token, Ok(t) if !matches!(&t.registration_token, Some(v) if !v.trim().is_empty()))
+}
+
+/// N-central issues the registration token of a customer or site when an agent download is
+/// first requested for it. For every fetched target that has none, request a download link
+/// (five at a time) and read the token again. A failed request becomes a warning and leaves
+/// that target as it was.
+async fn create_missing_tokens(
+    client: &crate::api::client::NcClient,
+    fetched: &mut [FetchedToken],
+    phase: &str,
+    emit_progress: &(dyn Fn(&str, &str, f32) + Send + Sync),
+    cancel_token: &AtomicBool,
+    warnings: &mut Vec<String>,
+) -> TokenCreation {
+    let missing: Vec<(usize, i64)> = fetched
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, token))| lacks_token(token))
+        .map(|(index, (target, _))| (index, target.org_unit_id))
+        .collect();
+    if missing.is_empty() {
+        return TokenCreation::default();
+    }
+    emit_progress(
+        phase,
+        &format!(
+            "Creating registration tokens for {} customers and sites without one...",
+            missing.len()
+        ),
+        86.0,
+    );
+
+    let results: Vec<_> = stream::iter(missing)
+        .map(|(index, org_unit_id)| async move {
+            if cancel_token.load(Ordering::Relaxed) {
+                return None;
+            }
+            let created = client
+                .generate_software_download_link(org_unit_id, WINDOWS_AGENT_SOFTWARE_ID)
+                .await;
+            Some((
+                index,
+                match created {
+                    Ok(_) => Ok(client.get_registration_token(org_unit_id).await),
+                    Err(e) => Err(e),
+                },
+            ))
+        })
+        .buffer_unordered(5)
+        .filter_map(|result| async move { result })
+        .collect()
+        .await;
+
+    let mut creation = TokenCreation::default();
+    for (index, result) in results {
+        match result {
+            Ok(token) => {
+                creation.requested.insert(index);
+                fetched[index].1 = token;
+            }
+            Err(e) => {
+                creation.failed.insert(index);
+                warnings.push(format!(
+                    "Could not create a registration token for {} [ID {}]: {}",
+                    fetched[index].0.describe(),
+                    fetched[index].0.org_unit_id,
+                    e
+                ));
+            }
+        }
+    }
+    creation
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct GenerationOutcome {
     pub folder: Option<PathBuf>,
@@ -224,7 +316,8 @@ pub(crate) struct GenerationOutcome {
 }
 
 /// Fetch the token of each target and write one script per target into a new folder under
-/// `output_dir`. A problem with one target becomes a warning and the rest are still written.
+/// `output_dir`. A target without a token gets one created first. A problem with one target
+/// becomes a warning and the rest are still written.
 pub(crate) async fn generate_scripts(
     client: &crate::api::client::NcClient,
     server_url: &str,
@@ -275,11 +368,21 @@ pub(crate) async fn generate_scripts(
         cancel_token,
     )
     .await;
+    let mut fetched = fetched;
+    let creation = create_missing_tokens(
+        client,
+        &mut fetched,
+        PHASE,
+        emit_progress,
+        cancel_token,
+        &mut outcome.warnings,
+    )
+    .await;
     outcome.cancelled = cancel_token.load(Ordering::Relaxed);
 
     emit_progress(PHASE, "Writing scripts...", 90.0);
     let now = chrono::Utc::now();
-    for (target, (_, token)) in unique.iter().zip(fetched) {
+    for (index, (target, (_, token))) in unique.iter().zip(fetched).enumerate() {
         let name = target.display_name();
         let RegistrationToken {
             registration_token,
@@ -295,10 +398,19 @@ pub(crate) async fn generate_scripts(
             }
         };
         let Some(token) = registration_token.filter(|t| !t.trim().is_empty()) else {
-            outcome.warnings.push(format!(
-                "{} [ID {}] has no registration token.",
-                name, target.org_unit_id
-            ));
+            // A failed request to create one has already been reported.
+            if !creation.failed.contains(&index) {
+                outcome.warnings.push(format!(
+                    "{} [ID {}] has no registration token{}.",
+                    name,
+                    target.org_unit_id,
+                    if creation.requested.contains(&index) {
+                        " even after one was requested"
+                    } else {
+                        ""
+                    }
+                ));
+            }
             continue;
         };
         let script = match render_script(&server, target, token.trim()) {

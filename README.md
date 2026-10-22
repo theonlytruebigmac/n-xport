@@ -30,9 +30,9 @@ More detail: [Technical overview](docs/TECHNICAL_OVERVIEW.md) (architecture, mig
 - Not supported: Service Organizations, devices, and device assets
 
 ### Generate Installer Scripts
-- Creates a Windows agent installer script for each customer or site you pick, using that customer's or site's existing registration token
+- Creates a Windows agent installer script for each customer or site you pick, using that customer's or site's registration token. One that has no token yet gets one created first: N-xport requests an agent download link for it, which is when N-central issues the token
 - Each script downloads the current agent from your N-central server and installs it silently for that customer or site; run it from an elevated PowerShell session
-- Scripts are written to a new, timestamped folder. A customer or site with no token, or an unreadable one, is reported and skipped; an expired token is reported too, and its script is still written
+- Scripts are written to a new, timestamped folder. A customer or site whose token cannot be read or created is reported and skipped; an expired token is reported too, and its script is still written
 - **Each script contains a registration token in plain text.** Store and share the files securely and delete them after deployment
 - Windows agents only. The install logic is adapted from the N-central Customer Installer Generator sample script by Morgan Rourke ([MorganR99](https://github.com/MorganR99)); the generated scripts carry the same disclaimer
 

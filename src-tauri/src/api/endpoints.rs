@@ -77,6 +77,12 @@ pub fn org_unit_registration_token(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/registration-token", org_unit_id)
 }
 
+/// Build URL for generating a software download link for a customer. N-central issues the
+/// customer's registration token when it first hands out an agent download.
+pub fn customer_software_installers(customer_id: i64) -> String {
+    format!("/api/customers/{}/software/installers", customer_id)
+}
+
 /// Build URL for org unit custom properties (list / paginated GET)
 pub fn org_unit_custom_properties(org_unit_id: i64) -> String {
     format!("/api/org-units/{}/custom-properties", org_unit_id)

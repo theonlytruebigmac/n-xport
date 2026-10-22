@@ -607,7 +607,7 @@ Note on access groups and user roles: they are exported once for each org unit t
 
 ### Installer scripts
 
-`commands/installers.rs` turns registration tokens into Windows agent installer scripts, one per customer or site, as the peer sample script does for customers. For each selected target it calls `GET /api/org-units/{id}/registration-token` (five at a time, sharing `fetch_tokens` with the registration token export), fills `data/install_agent.ps1.template`, and writes the result to a new `N-central Installer Scripts - <host> - <time>` folder. Customers and sites use the same installer arguments: the org unit's ID as `CUSTOMERID` with its own token.
+`commands/installers.rs` turns registration tokens into Windows agent installer scripts, one per customer or site, as the peer sample script does for customers. For each selected target it calls `GET /api/org-units/{id}/registration-token` (five at a time, sharing `fetch_tokens` with the registration token export), fills `data/install_agent.ps1.template`, and writes the result to a new `N-central Installer Scripts - <host> - <time>` folder. Customers and sites use the same installer arguments: the org unit's ID as `CUSTOMERID` with its own token. N-central issues a registration token when an agent download is first requested for a customer or site, and the REST API has no call that creates one directly. So after the fetch, every target that came back with no token gets `POST /api/customers/{id}/software/installers` with the Windows agent's software ID (101), five at a time, and its token is read again; the returned link is unused. A failed request becomes a warning, and a token still empty afterwards is reported as missing. The registration token export never does this: it only reads.
 
 Safety rules, all tested: the server must be HTTPS on port 443 with a plain host name (the installer arguments assume 443); the token must be GUID-like characters only; names are escaped for a PowerShell single-quoted string, including the curly single quotes PowerShell also treats as quotes, and line breaks become spaces; file names avoid reserved characters and device names and include the org unit ID so equal names never collide; files are created readable only by the current user on macOS and Linux. A test parses every generated script with `pwsh` (skipped when it is not installed) using hostile names. Tokens are never put in warnings or the activity log. A target with no token, an unreadable token, or a write failure is a warning and the rest are still written; an expired token is a warning but its script is still written.
 
@@ -711,7 +711,7 @@ The full set of commands exposed by the Rust backend:
 | | `generate_template(resource_type, path)` | Write a CSV template |
 | | `get_import_types()` | List resource types and whether each is supported |
 | **Installer scripts** | `list_installer_targets(service_org_id)` | List the customers and sites that can get a script |
-| | `generate_installer_scripts(output_dir, targets)` | Fetch each target's registration token and write one Windows installer script per target into a new folder |
+| | `generate_installer_scripts(output_dir, targets)` | Fetch each target's registration token (creating missing ones) and write one Windows installer script per target into a new folder |
 | **Migration** | `start_migration(options, source_so_id, dest_so_id)` | Begin migration |
 | | `migration_preflight(options, source_so_id, dest_so_id)` | Describe a migration (steps, SOAP use, known follow-up) without contacting either server |
 
