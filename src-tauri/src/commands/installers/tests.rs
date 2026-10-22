@@ -111,9 +111,32 @@ fn token_expiry_is_read_from_the_api_format() {
 }
 
 fn token_server() -> impl std::future::Future<Output = crate::test_support::MockServer> {
-    start(|method, path, _| {
+    // Customer 31 has no token until a download link is requested for it; asking for one for
+    // customer 32 fails.
+    let issued = std::sync::Arc::new(std::sync::Mutex::new(false));
+    start(move |method, path, _| {
+        if method == "POST" {
+            return match path {
+                "/api/customers/31/software/installers" => {
+                    *issued.lock().unwrap() = true;
+                    json_response(serde_json::json!({"downloadLink": "https://x/y"}))
+                }
+                "/api/customers/30/software/installers" => {
+                    json_response(serde_json::json!({"downloadLink": "https://x/y"}))
+                }
+                _ => (409, "{}".into()),
+            };
+        }
         assert_eq!(method, "GET");
         match path {
+            "/api/org-units/31/registration-token" if *issued.lock().unwrap() => {
+                json_response(serde_json::json!({"data": {
+                    "registrationToken": TOKEN,
+                    "registrationTokenExpiryDate": "2099-01-01T00:00:00Z[UTC]"}}))
+            }
+            "/api/org-units/31/registration-token" | "/api/org-units/32/registration-token" => {
+                json_response(serde_json::json!({"data": {}}))
+            }
             "/api/org-units/20/registration-token" => not_found(),
             "/api/org-units/30/registration-token" => {
                 json_response(serde_json::json!({"data": {}}))
@@ -146,6 +169,8 @@ async fn writes_a_script_for_each_target_that_has_a_usable_token() {
         target(11, "site", "Acme HQ", Some("Acme")),
         target(20, "customer", "No access", None),
         target(30, "customer", "No token", None),
+        target(31, "customer", "Made on demand", None),
+        target(32, "customer", "Cannot make", None),
         target(40, "customer", "Odd token", None),
         target(50, "customer", "Expired", None),
         // Listed twice: still one script.
@@ -180,24 +205,43 @@ async fn writes_a_script_for_each_target_that_has_a_usable_token() {
             "Acme - Acme HQ_11_Install-NCentralAgent.ps1",
             "Acme_10_Install-NCentralAgent.ps1",
             "Expired_50_Install-NCentralAgent.ps1",
+            "Made on demand_31_Install-NCentralAgent.ps1",
         ]
     );
-    assert_eq!(outcome.files.len(), 3);
+    assert_eq!(outcome.files.len(), 4);
 
     let joined = outcome.warnings.join("\n");
     assert!(joined.contains("No access [ID 20]"), "{joined}");
     assert!(
-        joined.contains("No token [ID 30] has no registration token"),
+        joined.contains("No token [ID 30] has no registration token even after one was requested"),
         "{joined}"
     );
+    assert!(
+        joined.contains("Could not create a registration token for customer Cannot make [ID 32]"),
+        "{joined}"
+    );
+    assert!(!joined.contains("Made on demand"), "{joined}");
     assert!(joined.contains("Odd token [ID 40]"), "{joined}");
     assert!(joined.contains("Expired [ID 50] has expired"), "{joined}");
-    assert_eq!(outcome.warnings.len(), 4);
+    assert_eq!(outcome.warnings.len(), 5);
     // Tokens are secrets and never appear in warnings.
     assert!(!joined.contains(TOKEN));
     assert_eq!(
         server.count("GET", "/api/org-units/10/registration-token"),
         1
+    );
+    // Only targets without a token are asked to create one, with the Windows agent's ID.
+    assert_eq!(
+        server.count("POST", "/api/customers/10/software/installers"),
+        0
+    );
+    assert_eq!(
+        server.count("POST", "/api/customers/31/software/installers"),
+        1
+    );
+    assert_eq!(
+        server.bodies("POST", "/api/customers/31/software/installers"),
+        vec![r#"{"softwareId":"101"}"#.to_string()]
     );
 }
 

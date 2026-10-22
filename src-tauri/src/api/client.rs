@@ -485,6 +485,23 @@ impl NcClient {
         })
     }
 
+    /// Ask N-central for a download link to a software package. The REST API has no way to
+    /// create a registration token directly, but the server issues the token of a customer
+    /// or site when an agent download is requested for it, so this is how a missing token is
+    /// created. The link itself is not used.
+    pub async fn generate_software_download_link(
+        &self,
+        org_unit_id: i64,
+        software_id: i64,
+    ) -> ApiResult<serde_json::Value> {
+        let path = endpoints::customer_software_installers(org_unit_id);
+        self.post(
+            &path,
+            &serde_json::json!({ "softwareId": software_id.to_string() }),
+        )
+        .await
+    }
+
     /// Get custom properties for a device
     pub async fn get_device_properties(&self, device_id: i64) -> ApiResult<Vec<DeviceProperty>> {
         let path = endpoints::device_custom_properties(device_id);
